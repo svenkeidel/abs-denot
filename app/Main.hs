@@ -1,7 +1,6 @@
 module Main where
 
-import qualified Expr
+import qualified Play
 
 main :: IO ()
-main = do
-  putStrLn "Hello, Haskell!"
+main = Play.main
