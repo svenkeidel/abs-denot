@@ -1,8 +1,5 @@
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE RoleAnnotations #-}
-{-# LANGUAGE QuantifiedConstraints #-}
+
 module Template where
 
 import Prelude hiding (lookup)
@@ -12,7 +9,6 @@ import qualified Data.IntMap.Lazy as L
 import qualified Data.Map.Strict as S
 import Control.Monad
 import Control.Monad.Fix
-import Data.Coerce
 
 type D m = m (Value m)
 newtype Value m = Fun (D m -> D m)
@@ -23,17 +19,15 @@ instance Show (Value m) where
   show (Fun _) = show "Fun"
 
 class Monad m => MonadAlloc m where
---  alloc :: Name -> Env m -> (Env m -> D m) -> m (Env m)
   alloc :: (D m -> D m) -> m (D m)
 
 class Monad m => MonadTrace m where
-  stuck :: D m
-  lookup :: D m -> D m
-  update :: D m -> D m
-  app1 :: D m -> D m
-  app2 :: D m -> D m
-  bind :: D m -> D m
-
+  stuck :: m v
+  lookup :: Name -> m v -> m v
+  update :: m v -> m v
+  app1 :: m v -> m v
+  app2 :: m v -> m v
+  bind :: m v -> m v
 
 ev :: (MonadAlloc m, MonadTrace m) => (Expr -> Env m -> D m) -> Expr -> Env m -> D m
 ev ev e env = case e of
@@ -43,40 +37,38 @@ ev ev e env = case e of
     Just d  -> app1 (ev e env >>= \(Fun f) -> f d)
   Lam x e -> return (Fun (\d -> app2 (ev e (S.insert x d env))))
   Let x e1 e2 -> do
---    env' <- alloc x env (lookup . ev e1)
-    let ext d = S.insert x (lookup d) env
+    let ext d = S.insert x (lookup x d) env
     d1 <- alloc (ev e1 . ext)
     bind (ev e2 (ext d1))
 
 eval :: (MonadAlloc m, MonadTrace m) => Expr -> Env m -> D m
 eval = ev eval
 
+-----------------------
+-- By-name
+-----------------------
 newtype ByName m a = ByName { unByName :: (m a) }
   deriving newtype (Functor,Applicative,Monad)
-type role ByName representational nominal
 instance Monad m => MonadAlloc (ByName m) where
   alloc f = pure (fix f)
 
-thingOne :: (Monad m, Monad n, forall v. Coercible (m v) (n v)) => (D m -> D m) -> D n -> D n
-thingOne n = coerce n
+thingName :: (forall v. m v -> m v) -> ByName m v -> ByName m v
+thingName f (ByName m) = ByName (f m)
 
-thingName :: (D m -> D m) -> D (ByName m) -> D (ByName m)
-thingName f = coerce f
-valueName :: Value m -> Value (ByName m)
-valueName (Fun f) = Fun (\d -> (ByName (f (valueName <$> unByName d))))
 instance MonadTrace m => MonadTrace (ByName m) where
-  stuck = coerce stuck
-  lookup = thingName lookup
+  stuck = ByName stuck
+  lookup x = thingName (lookup x)
   update = thingName update
   app1 = thingName app1
   app2 = thingName app2
   bind = thingName bind
 instance Show (ByName m a) where
   show _ = "_"
-evalByName :: Expr -> Compute (Value (ByName Compute))
-evalByName e = unByName $ eval e S.empty
 
 
+-----------------------
+-- By-need
+-----------------------
 newtype ByNeed m a = ByNeed { unByNeed :: StateT (Heap (ByNeed m)) m a }
   deriving newtype (Functor,Applicative,Monad)
 fetch :: Monad m => Addr -> D (ByNeed m)
@@ -97,63 +89,41 @@ thingNeed :: (forall a. m a -> m a) -> ByNeed m a -> ByNeed m a
 thingNeed f (ByNeed (StateT m)) = ByNeed (StateT (\h -> f (m h)))
 instance MonadTrace m => MonadTrace (ByNeed m) where
   stuck = ByNeed (StateT (const stuck))
-  lookup = thingNeed lookup
+  lookup x = thingNeed (lookup x)
   update = thingNeed update
   app1 = thingNeed app1
   app2 = thingNeed app2
   bind = thingNeed bind
 instance Show (ByNeed m a) where
   show _ = "_"
-evalByNeed :: Expr -> Compute (Value (ByNeed Compute), Heap (ByNeed Compute))
-evalByNeed e = runStateT (unByNeed (eval e S.empty)) L.empty
 
 
+-----------------------
+-- By-value
+-----------------------
 newtype ByValue m a = ByValue { unByValue :: (m a) }
   deriving newtype (Functor,Applicative,Monad,MonadFix)
-instance Monad m => MonadAlloc (ByValue m) where
+instance MonadFix m => MonadAlloc (ByValue m) where
   alloc f = do
-    v <- fix f -- TODO: FIXME
+    v <- mfix $ \v -> f (return v)
     return (return v)
 thingValue :: (forall a. m a -> m a) -> ByValue m a -> ByValue m a
 thingValue f (ByValue m) = ByValue (f m)
 instance MonadTrace m => MonadTrace (ByValue m) where
   stuck = ByValue stuck
-  lookup = thingValue lookup
+  lookup x = thingValue (lookup x)
   update = thingValue update
   app1 = thingValue app1
   app2 = thingValue app2
   bind = thingValue bind
 instance Show (ByValue m a) where
   show _ = "_"
-evalByValue :: Expr -> Compute (Value (ByValue Compute))
+
+evalByName :: MonadTrace m => Expr -> m (Value (ByName m))
+evalByName e = unByName $ eval e S.empty
+
+evalByNeed :: MonadTrace m => Expr -> m (Value (ByNeed m), Heap (ByNeed m))
+evalByNeed e = runStateT (unByNeed (eval e S.empty)) L.empty
+
+evalByValue :: (MonadFix m, MonadTrace m) => Expr -> m (Value (ByValue m))
 evalByValue e = unByValue $ eval e S.empty
-
-
-data Compute a = Step (Compute a) | Ret !a | Stuck
-  deriving Functor
-
-instance Show a => Show (Compute a) where
-  show (Step trc) = 'L':show trc
-  show Stuck = "🗲"
-  show (Ret a) = '⟨':show a++"⟩"
-
-instance Applicative Compute where
-  pure = Ret
-  Step f <*> a = Step (f <*> a)
-  Stuck <*> _ = Stuck
-  f <*> Step a = Step (f <*> a)
-  _ <*> Stuck = Stuck
-  Ret f <*> Ret a = Ret (f a)
-
-instance Monad Compute where
-  Stuck >>= _ = Stuck
-  Step d >>= k = Step (d >>= k)
-  Ret a >>= k = k a
-
-instance MonadTrace Compute where
-  stuck = Stuck
-  lookup = Step
-  update = Step
-  app1 = Step
-  app2 = Step
-  bind = Step

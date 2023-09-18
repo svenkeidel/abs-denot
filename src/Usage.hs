@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 module Usage where
 
 import Expr
@@ -31,24 +33,44 @@ type Us = S.Map Name U
 (.+.) :: Us -> Us -> Us
 (.+.) = S.unionWith (+#)
 
-data UsageTrace v = UT Us v
-  deriving (Functor)
+data UTrace a = Look Name (UTrace a) | Other (UTrace a) | Ret !a | Bot
+  deriving Functor
 
-instance Applicative UsageTrace where
-  pure v = UT S.empty v
-  UT us1 f <*> UT us2 a = UT (us1 .+. us2) (f a)
+instance Show a => Show (UTrace a) where
+  show (Look x trc) = show x ++ show trc
+  show (Other trc) = '.':show trc
+  show Bot = "🗲"
+  show (Ret a) = '⟨':show a++"⟩"
 
-instance Monad UsageTrace where
-  UT us1 a >>= k = UT (us1 .+. us2) b
-    where UT us2 b = k a
+instance Applicative UTrace where
+  pure = Ret
+  Look x f <*> a = Look x (f <*> a)
+  Other f <*> a = Other (f <*> a)
+  Bot <*> _ = Bot
+  f <*> Other a = Other (f <*> a)
+  f <*> Look x a = Look x (f <*> a)
+  _ <*> Bot = Bot
+  Ret f <*> Ret a = Ret (f a)
 
---botUsageTrace = UT S.empty
+instance Monad UTrace where
+  Bot >>= _ = Bot
+  Other d >>= k = Other (d >>= k)
+  Look x d >>= k = Look x (d >>= k)
+  Ret a >>= k = k a
 
-instance MonadTrace UsageTrace where
-  stuck = UT S.empty _
-  lookup = _
-  update = _
-  app1 = _
-  app2 = _
-  bind = _
+instance MonadTrace UTrace where
+  stuck = Bot
+  lookup = Look
+  update = Other
+  app1 = Other
+  app2 = Other
+  bind = Other
 
+evalByName :: Expr -> UTrace (Value (ByName UTrace))
+evalByName = Template.evalByName
+
+evalByNeed :: Expr -> UTrace (Value (ByNeed UTrace), Heap (ByNeed UTrace))
+evalByNeed = Template.evalByNeed
+
+-- evalByValue :: Expr -> UTrace (Value (ByValue UTrace))
+-- evalByValue = Template.evalByValue

@@ -11,7 +11,9 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Debug.Trace
 import Expr
-import Template
+import Bare
+import Eventful
+import Usage
 import System.IO
 
 x, y, z, a, b, c, d, e, f, i, t :: Expr
@@ -70,8 +72,21 @@ e_bug2 = read "let a = a in let b = let c = a in a in b"
 main :: IO ()
 main = forM_ [e_2, e_3, e_fresh] $ \e -> do
   putStrLn "----------------"
+  putStrLn "     Bare"
+  putStrLn "----------------"
   print e
-  print $ evalByName e
-  print $ evalByNeed e
-  print $ evalByValue e
+  print $ Bare.evalByName e
+  print $ Bare.evalByNeed e
+  print $ Bare.evalByValue e
+  putStrLn "----------------"
+  putStrLn "     Eventful"
+  putStrLn "----------------"
+  print $ Eventful.evalByName e
+  print $ Eventful.evalByNeed e
+  print $ Eventful.evalByValue e
+  putStrLn "----------------"
+  putStrLn "    UTrace"
+  putStrLn "----------------"
+  print $ Usage.evalByName e
+  print $ Usage.evalByNeed e
   return ()
