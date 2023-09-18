@@ -89,4 +89,8 @@ main = forM_ [e_2, e_3, e_fresh] $ \e -> do
   putStrLn "----------------"
   print $ Usage.evalByName e
   print $ Usage.evalByNeed e
+  putStrLn "----------------"
+  putStrLn "    Naive"
+  putStrLn "----------------"
+  print $ Usage.evalNaive e
   return ()
