@@ -1,6 +1,8 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE RoleAnnotations #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 module Template where
 
 import Prelude hiding (lookup)
@@ -10,6 +12,7 @@ import qualified Data.IntMap.Lazy as L
 import qualified Data.Map.Strict as S
 import Control.Monad
 import Control.Monad.Fix
+import Data.Coerce
 
 type D m = m (Value m)
 newtype Value m = Fun (D m -> D m)
@@ -23,16 +26,16 @@ class Monad m => MonadAlloc m where
 --  alloc :: Name -> Env m -> (Env m -> D m) -> m (Env m)
   alloc :: (D m -> D m) -> m (D m)
 
-class Monad m => MonadCompute m where
-  stuck :: m a
-  lookup :: m a -> m a
-  update :: m a -> m a
-  app1 :: m a -> m a
-  app2 :: m a -> m a
-  bind :: m a -> m a
+class Monad m => MonadTrace m where
+  stuck :: D m
+  lookup :: D m -> D m
+  update :: D m -> D m
+  app1 :: D m -> D m
+  app2 :: D m -> D m
+  bind :: D m -> D m
 
 
-ev :: (MonadAlloc m, MonadCompute m) => (Expr -> Env m -> D m) -> Expr -> Env m -> D m
+ev :: (MonadAlloc m, MonadTrace m) => (Expr -> Env m -> D m) -> Expr -> Env m -> D m
 ev ev e env = case e of
   Var x -> S.findWithDefault stuck x env
   App e x -> case S.lookup x env of
@@ -45,17 +48,24 @@ ev ev e env = case e of
     d1 <- alloc (ev e1 . ext)
     bind (ev e2 (ext d1))
 
-eval :: (MonadAlloc m, MonadCompute m) => Expr -> Env m -> D m
+eval :: (MonadAlloc m, MonadTrace m) => Expr -> Env m -> D m
 eval = ev eval
 
 newtype ByName m a = ByName { unByName :: (m a) }
   deriving newtype (Functor,Applicative,Monad)
+type role ByName representational nominal
 instance Monad m => MonadAlloc (ByName m) where
   alloc f = pure (fix f)
-thingName :: (forall a. m a -> m a) -> ByName m a -> ByName m a
-thingName f (ByName m) = ByName (f m)
-instance MonadCompute m => MonadCompute (ByName m) where
-  stuck = ByName stuck
+
+thingOne :: (Monad m, Monad n, forall v. Coercible (m v) (n v)) => (D m -> D m) -> D n -> D n
+thingOne n = coerce n
+
+thingName :: (D m -> D m) -> D (ByName m) -> D (ByName m)
+thingName f = coerce f
+valueName :: Value m -> Value (ByName m)
+valueName (Fun f) = Fun (\d -> (ByName (f (valueName <$> unByName d))))
+instance MonadTrace m => MonadTrace (ByName m) where
+  stuck = coerce stuck
   lookup = thingName lookup
   update = thingName update
   app1 = thingName app1
@@ -85,7 +95,7 @@ instance Monad m => MonadAlloc (ByNeed m) where
     return d
 thingNeed :: (forall a. m a -> m a) -> ByNeed m a -> ByNeed m a
 thingNeed f (ByNeed (StateT m)) = ByNeed (StateT (\h -> f (m h)))
-instance MonadCompute m => MonadCompute (ByNeed m) where
+instance MonadTrace m => MonadTrace (ByNeed m) where
   stuck = ByNeed (StateT (const stuck))
   lookup = thingNeed lookup
   update = thingNeed update
@@ -106,7 +116,7 @@ instance Monad m => MonadAlloc (ByValue m) where
     return (return v)
 thingValue :: (forall a. m a -> m a) -> ByValue m a -> ByValue m a
 thingValue f (ByValue m) = ByValue (f m)
-instance MonadCompute m => MonadCompute (ByValue m) where
+instance MonadTrace m => MonadTrace (ByValue m) where
   stuck = ByValue stuck
   lookup = thingValue lookup
   update = thingValue update
@@ -140,7 +150,7 @@ instance Monad Compute where
   Step d >>= k = Step (d >>= k)
   Ret a >>= k = k a
 
-instance MonadCompute Compute where
+instance MonadTrace Compute where
   stuck = Stuck
   lookup = Step
   update = Step
