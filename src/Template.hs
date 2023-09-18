@@ -53,24 +53,25 @@ eval = ev eval
 
 newtype ByName m a = ByName { unByName :: (m a) }
   deriving newtype (Functor,Applicative,Monad)
-type role ByName representational nominal
 instance Monad m => MonadAlloc (ByName m) where
   alloc f = pure (fix f)
 
 thingOne :: (Monad m, Monad n, forall v. Coercible (m v) (n v)) => (D m -> D m) -> D n -> D n
-thingOne n = coerce n
+thingOne f d = thingThree (f (thingThree d))
 
-thingName :: (D m -> D m) -> D (ByName m) -> D (ByName m)
-thingName f = coerce f
-valueName :: Value m -> Value (ByName m)
-valueName (Fun f) = Fun (\d -> (ByName (f (valueName <$> unByName d))))
+thingThree :: forall m n. (Monad m, Monad n, forall v. Coercible (m v) (n v)) => D m -> D n
+thingThree d = coerce (fmap thingTwo d :: m (Value n))
+
+thingTwo :: forall m n. (Monad m, Monad n, forall v. Coercible (m v) (n v)) => Value m -> Value n
+thingTwo (Fun g) = Fun (\d -> thingThree (g (thingThree d :: D m)) :: D n)
+
 instance MonadTrace m => MonadTrace (ByName m) where
-  stuck = coerce stuck
-  lookup = thingName lookup
-  update = thingName update
-  app1 = thingName app1
-  app2 = thingName app2
-  bind = thingName bind
+  stuck = thingThree (stuck :: D m)
+  lookup = thingOne (lookup :: D m -> D m)
+  update = thingOne (update :: D m -> D m)
+  app1 = thingOne (app1 :: D m -> D m)
+  app2 = thingOne (app2 :: D m -> D m)
+  bind = thingOne (bind :: D m -> D m)
 instance Show (ByName m a) where
   show _ = "_"
 evalByName :: Expr -> Compute (Value (ByName Compute))
@@ -117,12 +118,12 @@ instance Monad m => MonadAlloc (ByValue m) where
 thingValue :: (forall a. m a -> m a) -> ByValue m a -> ByValue m a
 thingValue f (ByValue m) = ByValue (f m)
 instance MonadTrace m => MonadTrace (ByValue m) where
-  stuck = ByValue stuck
-  lookup = thingValue lookup
-  update = thingValue update
-  app1 = thingValue app1
-  app2 = thingValue app2
-  bind = thingValue bind
+  stuck = thingThree (stuck :: D m)
+  lookup = thingOne (lookup :: D m -> D m)
+  update = thingOne (update :: D m -> D m)
+  app1 = thingOne (app1 :: D m -> D m)
+  app2 = thingOne (app2 :: D m -> D m)
+  bind = thingOne (bind :: D m -> D m)
 instance Show (ByValue m a) where
   show _ = "_"
 evalByValue :: Expr -> Compute (Value (ByValue Compute))
