@@ -54,6 +54,17 @@ instance MonadTrace Eventful where
   app2 = Delay App2
   bind = Delay Bind
 
+instance MonadRecord Eventful where
+  recordIfJust (Ret Nothing) = Nothing
+  recordIfJust (Ret (Just a)) = Just (Ret a)
+  recordIfJust Stuck = Just Stuck
+  recordIfJust (Delay e t) = Delay e <$> recordIfJust t
+
+
+boundT :: Int -> Eventful v -> Maybe (Eventful v)
+boundT 0 _ = Nothing
+boundT n (Delay e t) = Delay e <$> boundT (n-1) t
+boundT _ t = Just t
 
 evalByName :: Expr -> Eventful (Value (ByName Eventful))
 evalByName = Template.evalByName
@@ -63,3 +74,6 @@ evalByNeed = Template.evalByNeed
 
 evalByValue :: Expr -> Eventful (Value (ByValue Eventful))
 evalByValue = Template.evalByValue
+
+evalClairvoyant :: Expr -> Eventful (Value (Clairvoyant Eventful))
+evalClairvoyant = Template.evalClairvoyant

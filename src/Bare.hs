@@ -45,6 +45,17 @@ instance MonadTrace Bare where
   app2 = Delay
   bind = Delay
 
+instance MonadRecord Bare where
+  recordIfJust (Ret Nothing) = Nothing
+  recordIfJust (Ret (Just a)) = Just (Ret a)
+  recordIfJust Stuck = Just Stuck
+  recordIfJust (Delay t) = Delay <$> recordIfJust t
+
+
+boundT :: Int -> Bare v -> Maybe (Bare v)
+boundT 0 _ = Nothing
+boundT n (Delay t) = Delay <$> boundT (n-1) t
+boundT _ t = Just t
 
 evalByName :: Expr -> Bare (Value (ByName Bare))
 evalByName = Template.evalByName
@@ -54,3 +65,6 @@ evalByNeed = Template.evalByNeed
 
 evalByValue :: Expr -> Bare (Value (ByValue Bare))
 evalByValue = Template.evalByValue
+
+evalClairvoyant :: Expr -> Bare (Value (Clairvoyant Bare))
+evalClairvoyant = Template.evalClairvoyant
