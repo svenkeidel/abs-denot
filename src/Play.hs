@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeApplications #-}
+
 module Play where
 
 import Control.Applicative
@@ -14,6 +16,7 @@ import Expr
 import Bare
 import Eventful
 import NaiveUsage
+import Seq
 import System.IO
 
 x, y, z, a, b, c, d, e, f, i, t :: Expr
@@ -104,7 +107,13 @@ main = forM_ [e_2, e_3, e_fresh, e_usg, e_usg2, e_usg3, e_clairvoyant_loop] $ \e
   print $ Eventful.boundT 40 $ Eventful.evalByName e
   print $ Eventful.boundT 40 $ Eventful.evalByNeed e
   print $ Eventful.boundT 40 $ Eventful.evalByValue e
-  print $ Eventful.boundT 40 $ Eventful.evalClairvoyant e
+  -- print $ Eventful.boundT 40 $ Eventful.evalClairvoyant e
+  putStrLn "----------------"
+  putStrLn "     Seq"
+  putStrLn "----------------"
+  -- mapM_ print $ take 30 $ Seq.evalByName @UTrace e
+  print $ take 15 $ Seq.evalByNeed @UTrace e
+  -- mapM_ print $ take 30 $ Seq.evalByValue @UTrace e
 --  putStrLn "----------------"
 --  putStrLn "    UTrace"
 --  putStrLn "----------------"

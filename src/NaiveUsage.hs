@@ -8,6 +8,7 @@ import Expr
 import Template
 import qualified Data.Map.Strict as S
 import Data.Coerce
+import GHC.Show
 
 -- Challenges:
 -- 1. How to communicate the address to lookup?
@@ -36,6 +37,9 @@ type Us = S.Map Name U
 
 (.+.) :: Us -> Us -> Us
 (.+.) = S.unionWith (+#)
+
+instance {-# OVERLAPPING #-} Show Us where
+  show = ($ []) . showList__ (\(k,v) -> (k ++) . ('↦':) . shows v) . S.toList
 
 instance Show U where
   show Z = "0"

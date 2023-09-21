@@ -24,16 +24,19 @@ First off, `L` not simply a lattice, but rather some Monad `AbsM` such that `L =
 satisfying both the `MonadAlloc` and `MonadTrace` constraints.
 Likewise, `Trace` is really `TraceM (Value TraceM)` with its own `MonadAlloc` and `MonadTrace` in turn.
 
-Translated to explicit Dictionary passing, and naming `trc : MonadTrace AbsM` and `allc : MonadAlloc AbsM`,
-we can (re-)construct `α : Trace -> L` by simple means from `trc`, e.g.,
+The `α : Trace -> L` is a special case of a (single-method) type class instance
 
-  α(Stuck) = trc.stuck
-  α(Ret v) = trc.return (α_V v)
-  α(Delay (Look as) t) = trc.look as t
-  α(Delay (Bind as) t) = trc.bind as t
+instance Repr T L => Repr (TraceM T) (AbsM L) where
+  α(Stuck) = AbsM.stuck
+  α(Ret v) = AbsM.return (α v)
+  α(Delay (Look as) t) = AbsM.look as t
+  α(Delay (Bind as) t) = AbsM.bind as t
   ...
 
-  α_V(Fun f) = Fun (α . f . γ)
+instance Abs T L => Abs (Value T) (Value L) where
+  α(Fun f) = Fun (α . f . γ)
+
+For this to make sense, AbsM must be endofunctors in the category of lattices.
 
 and then the correctness criterion is
 
@@ -93,7 +96,6 @@ Case e=let x = e1 in e2:
   Then the IH `α({ S[[e2]](ρ[x↦d]) | ρ∈γ^.(r),d∈γ(d') }) ⊑ S[[e2]](r[x↦d'])`
   implies that `α({ S[[e2]](ρ[x↦d]) | ρ∈γ^.(r) } ⊑ S[[e2]](r[x↦d'])` whenever $α(d) ⊑ d'$ (because then d ∈ γ(d')).
   So we get α(d)⊑d' on the result returned from `alloc`.
-  The correctness condition for `alloc f` might be something like `α(join (alloc f)) ⊑ trc.join (trc.alloc α(f))` (this is a profound requirement! not sure about the joins),
+  The correctness condition for `alloc f` is probably something like `α(alloc f) ⊑ trc.alloc α(f)` (this is not surprising, but still a profound requirement!),
   where `α(f) = α.f.γ`.
-
-
+  PROBLEM: α.f.γ might not exist. f might return an infinite trace; then α(f(...)) is undefined.

@@ -12,7 +12,6 @@ import qualified Data.IntMap.Lazy as L
 import qualified Data.Map.Strict as S
 import Control.Monad
 import Control.Monad.Fix
-import ListT
 import Data.Coerce
 import Data.Maybe
 import Control.Applicative
