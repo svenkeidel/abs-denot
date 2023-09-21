@@ -20,7 +20,7 @@ Associated to every trace monad is an instance of `MonadAlloc`, defining a fixpo
 
 # What do we have to show?
 
-First off, `L` not simply a lattice, but rather some Monad `AbsM` such that `L = AbsM (Value AbsM)`,
+First off, `L` not simply a lattice, but rather some Monad `AbsM` such that `L = AbsM (Value AbsM)` (`AbsM L` is a lattice whenever `L` is one),
 satisfying both the `MonadAlloc` and `MonadTrace` constraints.
 Likewise, `Trace` is really `TraceM (Value TraceM)` with its own `MonadAlloc` and `MonadTrace` in turn.
 
@@ -93,5 +93,7 @@ Case e=let x = e1 in e2:
   Then the IH `α({ S[[e2]](ρ[x↦d]) | ρ∈γ^.(r),d∈γ(d') }) ⊑ S[[e2]](r[x↦d'])`
   implies that `α({ S[[e2]](ρ[x↦d]) | ρ∈γ^.(r) } ⊑ S[[e2]](r[x↦d'])` whenever $α(d) ⊑ d'$ (because then d ∈ γ(d')).
   So we get α(d)⊑d' on the result returned from `alloc`.
-  The correctnes condition for `alloc` might be something like
+  The correctness condition for `alloc f` might be something like `α(join (alloc f)) ⊑ trc.join (trc.alloc α(f))` (this is a profound requirement! not sure about the joins),
+  where `α(f) = α.f.γ`.
+
 
