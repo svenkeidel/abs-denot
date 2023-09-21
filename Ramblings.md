@@ -37,6 +37,10 @@ instance Abs T L => Abs (Value T) (Value L) where
   α(Fun f) = Fun (α . f . γ)
 
 For this to make sense, AbsM must be endofunctors in the category of lattices.
+Furthermore, α is not actually computable unless the trace is finite.
+(We want something like α(τ) = ⊔_τ*∈pref(τ) α(τ*).
+When γ(l) is a safety property for all l, then α(τ) ⊑ ⊔α(τ*) for all prefixes τ*∈pref(τ).)
+Hence this is of no consequence for safety properties, because approximating all finite prefixes is sufficient.
 
 and then the correctness criterion is
 
@@ -96,6 +100,63 @@ Case e=let x = e1 in e2:
   Then the IH `α({ S[[e2]](ρ[x↦d]) | ρ∈γ^.(r),d∈γ(d') }) ⊑ S[[e2]](r[x↦d'])`
   implies that `α({ S[[e2]](ρ[x↦d]) | ρ∈γ^.(r) } ⊑ S[[e2]](r[x↦d'])` whenever $α(d) ⊑ d'$ (because then d ∈ γ(d')).
   So we get α(d)⊑d' on the result returned from `alloc`.
-  The correctness condition for `alloc f` is probably something like `α(alloc f) ⊑ trc.alloc α(f)` (this is not surprising, but still a profound requirement!),
+  The correctness condition for `alloc x f` is probably something like `α(alloc x f) ⊑ trc.alloc x α(f)` (this is not surprising, but still a profound requirement!),
   where `α(f) = α.f.γ`.
-  PROBLEM: α.f.γ might not exist. f might return an infinite trace; then α(f(...)) is undefined.
+  OBSERVATION: alloc is in fact the *only* method that depends on evaluation order (in a meaningful way).
+               This is where we must be smart!
+
+In total, we need:
+  * Abstraction lemmas for all type class methods of the form `α(m) ⊑ trc.m`
+    (for `return`, `(>>=)`, `app1`, `app2`, ..., `alloc`)
+  * Monotonicity for all type class methods
+
+Simple enough. Except for MonadAlloc, but that's the point!
+Need to relate MonadAlloc Name with MonadAlloc UTrace
+
+Show stuff for Name, separately show α(Need) ⊑ α(Name) (boring!...? probably can have something like α(ρ) ⊑ α(μ.ρ))
+
+
+# PRoving alloc correct
+
+instance MonadTrace m => MonadAlloc (ByNeed m) where
+  alloc f = do
+    a <- ByNeed $ maybe 0 (\(k,_) -> k+1) . L.lookupMax <$> get
+    let d = fetch a
+    ByNeed $ modify (L.insert a (memo a (f d)))
+    return d
+
+vs.
+
+instance MonadAlloc UTrace where
+  alloc f = do
+    let us = fixIter (\us -> evalDeep (f (UT us Nop)))
+    pure (UT us Nop)
+
+(.<=.) :: Us -> Us -> Bool
+us1 .<=. us2 = (us1 .⊔. us2) == us2
+
+fixIter :: (Us -> Us) -> Us
+fixIter f = go (f S.empty)
+  where
+  go us = let us' = f us in if us' .<=. us then us' else go us'
+
+evalUTrace :: Expr -> UTrace (Value UTrace)
+evalUTrace e = eval e S.empty
+
+nopD :: D UTrace
+nopD = UT S.empty Nop
+
+evalDeep :: D UTrace -> Us
+evalDeep (UT us v) = go us v
+  where
+    go us Bot = us
+    go us Nop = us
+    go us (Ret (Fun f)) = case f nopD of
+      UT us2 v -> go (us .+. us2) v
+
+manyfy :: Us -> Us
+manyfy = S.map (const W)
+
+nopVal :: Value UTrace
+nopVal = Fun (\d -> UT (manyfy (evalDeep d)) Nop)
+

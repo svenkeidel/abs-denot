@@ -16,7 +16,7 @@ import Expr
 import Bare
 import Eventful
 import NaiveUsage
-import Seq
+import PrefixTrace
 import System.IO
 
 x, y, z, a, b, c, d, e, f, i, t :: Expr
@@ -75,10 +75,12 @@ e_usg2 = read "let i = λx.x in let j = λy.y in i j"
 e_usg3 :: Expr
 e_usg3 = read "let f = λx.f f in f"
 
+e_usg4 :: Expr
+e_usg4 = read "let i = λx.x x in let f = i in (λy.y y) f"
 
+e_usg_lam :: Expr
+e_usg_lam = read "let i = λx.x in let f = i in (λy.y) f"
 
---e_bug1 :: Expr
---e_bug1 = uniqify $ read "let a = (λb.let c = a in (let d = λe.a b in let f = let g = a in a in λh.let i = a in d) a) a in (let j = a in a) a"
 
 e_bug2 :: Expr
 e_bug2 = read "let a = a in let b = let c = a in a in b"
@@ -90,7 +92,7 @@ e_clairvoyant_loop :: Expr
 e_clairvoyant_loop = read "let i = λx.x in let ω = λy.y y in ω ω"
 
 main :: IO ()
-main = forM_ [e_2, e_3, e_fresh, e_usg, e_usg2, e_usg3, e_clairvoyant_loop] $ \e -> do
+main = forM_ [e_2, e_3, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_lam] $ \e -> do
   putStrLn ""
   putStrLn "------------------------------"
   print e
@@ -109,11 +111,11 @@ main = forM_ [e_2, e_3, e_fresh, e_usg, e_usg2, e_usg3, e_clairvoyant_loop] $ \e
   print $ Eventful.boundT 40 $ Eventful.evalByValue e
   -- print $ Eventful.boundT 40 $ Eventful.evalClairvoyant e
   putStrLn "----------------"
-  putStrLn "     Seq"
+  putStrLn "     PrefixTrace"
   putStrLn "----------------"
-  -- mapM_ print $ take 30 $ Seq.evalByName @UTrace e
-  print $ take 15 $ Seq.evalByNeed @UTrace e
-  -- mapM_ print $ take 30 $ Seq.evalByValue @UTrace e
+  -- mapM_ print $ take 30 $ PrefixTrace.evalByName @UTrace e
+  print $ take 15 $ PrefixTrace.evalByNeed @UTrace e
+  -- mapM_ print $ take 30 $ PrefixTrace.evalByValue @UTrace e
 --  putStrLn "----------------"
 --  putStrLn "    UTrace"
 --  putStrLn "----------------"

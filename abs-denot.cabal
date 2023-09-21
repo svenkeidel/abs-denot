@@ -65,7 +65,7 @@ library
                       Eventful,
                       -- Usage,
                       NaiveUsage,
-                      Seq,
+                      PrefixTrace,
                       Play
 
     -- Modules included in this library but not exported.
