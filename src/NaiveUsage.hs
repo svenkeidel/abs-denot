@@ -6,9 +6,11 @@ module NaiveUsage where
 import Prelude hiding (lookup)
 import Expr
 import Template
+import Order
 import qualified Data.Map.Strict as S
 import Data.Coerce
 import GHC.Show
+import Control.Monad
 
 -- Challenges:
 -- 1. How to communicate the address to lookup?
@@ -20,20 +22,23 @@ import GHC.Show
 data U = Z | O | W -- 0 | 1 | ω
   deriving Eq
 
-(⊔) :: U -> U -> U
-Z ⊔ u = u
-u ⊔ Z = u
-O ⊔ O = O
-_ ⊔ _ = W
+instance PreOrd U where
+  l ⊑ r = l ⊔ r == r
+
+instance Complete U where
+  Z ⊔ u = u
+  u ⊔ Z = u
+  O ⊔ O = O
+  _ ⊔ _ = W
+
+instance LowerBounded U where
+  bottom = Z
 
 (+#) :: U -> U -> U
 O  +# O  = W
 u1 +# u2 = u1 ⊔ u2
 
 type Us = S.Map Name U
-
-(.⊔.) :: Us -> Us -> Us
-(.⊔.) = S.unionWith (⊔)
 
 (.+.) :: Us -> Us -> Us
 (.+.) = S.unionWith (+#)
@@ -72,29 +77,33 @@ evalDeep (UT us v) = go us v
     go us Nop = us
     go us (Ret (Fun f)) = case f nopD of
       UT us2 v -> go (us .+. us2) v
+    go us (Ret (Con _ ds)) =
+      foldr (.+.) us $ map evalDeep ds
 
 manyfy :: Us -> Us
 manyfy = S.map (const W)
 
-nopVal :: Value UTrace
-nopVal = Fun (\d -> UT (manyfy (evalDeep d)) Nop)
+nopFunVal :: Value UTrace
+nopFunVal = Fun (\d -> UT (manyfy (evalDeep d)) Nop)
+
+nopConVal :: ConTag -> Value UTrace
+nopConVal k = Con k (replicate (conArity k) nopD)
+
+nopVals :: [Value UTrace]
+nopVals = nopFunVal : map nopConVal [minBound..maxBound]
 
 instance Functor UVal where
   fmap _ Bot = Bot
-  fmap f Nop = fmap f (Ret nopVal)
+  fmap f Nop = fmap f (Ret nopFunVal)
   fmap f (Ret a) = Ret (f a)
 
 instance Applicative UTrace where
   pure a = UT S.empty (Ret a)
-  UT us1 Bot <*> _ = UT us1 Bot
-  UT us1 _ <*> UT us2 Bot = UT (us1 .+. us2) Bot
-  ut <*> UT us2 Nop = ut <*> UT us2 (Ret nopVal)
-  UT us1 (Ret f) <*> UT us2 (Ret a) = UT (us1 .+. us2) (Ret (f a))
-
+  (<*>) = ap
 
 instance Monad UTrace where
   UT us1 Bot >>= _ = UT us1 Bot
-  UT us1 Nop >>= k = UT us1 (Ret nopVal) >>= k
+  UT us1 Nop >>= k = UT us1 (Ret nopFunVal) >>= k
   UT us1 (Ret a) >>= k = case k a of
     UT us2 b -> UT (us1 .+. us2) b
 
@@ -108,6 +117,8 @@ instance MonadTrace UTrace where
   app1 = id
   app2 = id
   bind = id
+  case1 = id
+  case2 = id
 
 evalByName :: Expr -> UTrace (Value (ByName UTrace))
 evalByName = Template.evalByName
@@ -125,16 +136,13 @@ evalByNeed = Template.evalByNeed
 
 instance MonadAlloc UTrace where
   alloc f = do
-    let us = fixIter (\us -> evalDeep (f (UT us Nop)))
+    let us = kleeneFix (\us -> evalDeep (f (UT us Nop)))
     pure (UT us Nop)
 
-(.<=.) :: Us -> Us -> Bool
-us1 .<=. us2 = (us1 .⊔. us2) == us2
-
-fixIter :: (Us -> Us) -> Us
-fixIter f = go (f S.empty)
+kleeneFix :: (Complete l, LowerBounded l) => (l -> l) -> l
+kleeneFix f = go (f bottom)
   where
-  go us = let us' = f us in if us' .<=. us then us' else go us'
+  go l = let l' = f l in if l' ⊑ l then l' else go l'
 
 evalUTrace :: Expr -> UTrace (Value UTrace)
 evalUTrace e = eval e S.empty

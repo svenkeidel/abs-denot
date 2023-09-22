@@ -66,6 +66,7 @@ library
                       -- Usage,
                       NaiveUsage,
                       PrefixTrace,
+                      Order,
                       Play
 
     -- Modules included in this library but not exported.

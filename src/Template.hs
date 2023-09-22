@@ -16,14 +16,15 @@ import Data.Coerce
 import Data.Maybe
 import Control.Applicative
 import Debug.Trace
+import qualified Data.List as List
 
 type D m = m (Value m)
-newtype Value m = Fun (D m -> D m)
+data Value m = Fun (D m -> D m) | Con ConTag [D m]
 type Env m = S.Map Name (D m)
-type Heap m = L.IntMap (D m)
 
 instance Show (Value m) where
   show (Fun _) = show "Fun"
+  show (Con k _) = show k
 
 class Monad m => MonadAlloc m where
   alloc :: (D m -> D m) -> m (D m)
@@ -35,21 +36,37 @@ class Monad m => MonadTrace m where
   app1 :: m v -> m v
   app2 :: m v -> m v
   bind :: m v -> m v
+  case1 :: m v -> m v
+  case2 :: m v -> m v
 
-ev :: (MonadAlloc m, MonadTrace m) => (Expr -> Env m -> D m) -> Expr -> Env m -> D m
-ev ev e env = case e of
+insertMany :: Env m -> [Name] -> [D m] -> Env m
+insertMany env xs ds = foldr (uncurry S.insert) env (zip xs ds)
+
+eval :: (MonadAlloc m, MonadTrace m) => Expr -> Env m -> D m
+eval e env = case e of
   Var x -> S.findWithDefault stuck x env
   App e x -> case S.lookup x env of
     Nothing -> stuck
-    Just d  -> app1 (ev e env >>= \(Fun f) -> f d)
-  Lam x e -> return (Fun (\d -> app2 (ev e (S.insert x d env))))
+    Just d  -> app1 $ eval e env >>= \case
+      Fun f -> f d
+      _     -> stuck
+  Lam x e -> return (Fun (\d -> app2 (eval e (S.insert x d env))))
   Let x e1 e2 -> do
     let ext d = S.insert x (lookup x d) env
-    d1 <- alloc (ev e1 . ext)
-    bind (ev e2 (ext d1))
-
-eval :: (MonadAlloc m, MonadTrace m) => Expr -> Env m -> D m
-eval = ev eval
+    d1 <- alloc (\d1 -> eval e1 (ext d1))
+    bind (eval e2 (ext d1))
+  ConApp k xs -> case traverse (env S.!?) xs of
+    Just ds
+      | length xs == conArity k
+      -> return (Con k ds)
+    _ -> stuck
+  Case e alts -> case1 $ eval e env >>= \case
+    Con k ds
+      | Just (_,xs,rhs) <- List.find (\(k',_,_) -> k' == k) alts
+      , length xs == length ds
+      , length xs == conArity k
+      -> case2 (eval rhs (insertMany env xs ds))
+    _ -> stuck
 
 -----------------------
 -- By-name
@@ -59,7 +76,7 @@ newtype ByName m a = ByName { unByName :: (m a) }
 instance Monad m => MonadAlloc (ByName m) where
   alloc f = pure (fix f)
 
-thingName :: (forall v. m v -> m v) -> ByName m v -> ByName m v
+thingName :: (m v -> m v) -> ByName m v -> ByName m v
 thingName f (ByName m) = ByName (f m)
 
 instance MonadTrace m => MonadTrace (ByName m) where
@@ -69,6 +86,8 @@ instance MonadTrace m => MonadTrace (ByName m) where
   app1 = thingName app1
   app2 = thingName app2
   bind = thingName bind
+  case1 = thingName case1
+  case2 = thingName case2
 instance Show (ByName m a) where
   show _ = "_"
 
@@ -76,6 +95,8 @@ instance Show (ByName m a) where
 -----------------------
 -- By-need
 -----------------------
+type Addr = Int
+type Heap m = L.IntMap (D m) -- Addr -> D m
 newtype ByNeed m a = ByNeed { unByNeed :: StateT (Heap (ByNeed m)) m a }
   deriving newtype (Functor,Applicative,Monad)
 fetch :: Monad m => Addr -> D (ByNeed m)
@@ -100,6 +121,8 @@ instance MonadTrace m => MonadTrace (ByNeed m) where
   app1 = thingNeed app1
   app2 = thingNeed app2
   bind = thingNeed bind
+  case1 = thingNeed case1
+  case2 = thingNeed case2
 instance Show (ByNeed m a) where
   show _ = "_"
 
@@ -122,6 +145,8 @@ instance MonadTrace m => MonadTrace (ByValue m) where
   app1 = thingValue app1
   app2 = thingValue app2
   bind = thingValue bind
+  case1 = thingValue case1
+  case2 = thingValue case2
 instance Show (ByValue m a) where
   show _ = "_"
 
@@ -207,6 +232,8 @@ instance MonadTrace m => MonadTrace (Clairvoyant m) where
   app1 = thingClair app1
   app2 = thingClair app2
   bind = thingClair bind
+  case1 = thingClair case1
+  case2 = thingClair case2
 instance (Show a, forall a. Show a => Show (m a)) => Show (Clairvoyant m a) where
   show (Clairvoyant m) = show m
 
@@ -226,14 +253,15 @@ runClair (Clairvoyant m) = headParT m >>= \case
   Nothing -> error "There should have been at least one Clairvoyant trace"
   Just t  -> pure t
 
-evalByName :: MonadTrace m => Expr -> m (Value (ByName m))
-evalByName e = unByName $ eval e S.empty
+evalByName :: forall m. MonadTrace m => Expr -> m (Value (ByName m))
+evalByName e = unByName $ eval @(ByName m) e S.empty
 
-evalByNeed :: MonadTrace m => Expr -> m (Value (ByNeed m), Heap (ByNeed m))
-evalByNeed e = runStateT (unByNeed (eval e S.empty)) L.empty
+evalByNeed :: forall m. MonadTrace m => Expr -> m (Value (ByNeed m), Heap (ByNeed m))
+evalByNeed e = runStateT (unByNeed (eval @(ByNeed m) e S.empty)) L.empty
 
-evalByValue :: (MonadFix m, MonadTrace m) => Expr -> m (Value (ByValue m))
-evalByValue e = unByValue $ eval e S.empty
+evalByValue :: forall m. (MonadFix m, MonadTrace m) => Expr -> m (Value (ByValue m))
+evalByValue e = unByValue $ eval @(ByValue m) e S.empty
 
-evalClairvoyant :: (MonadRecord m, MonadFix m, MonadTrace m, forall a. Show a => Show (m a)) => Expr -> m (Value (Clairvoyant m))
-evalClairvoyant e = runClair $ eval e S.empty
+evalClairvoyant :: forall m. (MonadRecord m, MonadFix m, MonadTrace m, forall a. Show a => Show (m a)) => Expr -> m (Value (Clairvoyant m))
+evalClairvoyant e = runClair $ eval @(Clairvoyant m) e S.empty
+

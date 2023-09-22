@@ -44,6 +44,8 @@ instance MonadTrace Bare where
   app1 = Delay
   app2 = Delay
   bind = Delay
+  case1 = Delay
+  case2 = Delay
 
 instance MonadRecord Bare where
   recordIfJust (Ret Nothing) = Nothing

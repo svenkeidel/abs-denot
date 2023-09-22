@@ -6,7 +6,7 @@ import Expr
 import Template
 import Control.Monad.Fix
 
-data Evt = Look | Upd | App1 | App2 | Bind
+data Evt = Look | Upd | App1 | App2 | Bind | Case1 | Case2
 
 data Eventful a = Delay Evt (Eventful a) | Ret !a | Stuck
   deriving Functor
@@ -17,6 +17,8 @@ instance Show Evt where
   show App1 = "a"
   show App2 = "A"
   show Bind = "B"
+  show Case1 = "c"
+  show Case2 = "C"
 
 instance Show a => Show (Eventful a) where
   show (Delay evt trc) = show evt ++ show trc
@@ -53,6 +55,8 @@ instance MonadTrace Eventful where
   app1 = Delay App1
   app2 = Delay App2
   bind = Delay Bind
+  case1 = Delay Case1
+  case2 = Delay Case2
 
 instance MonadRecord Eventful where
   recordIfJust (Ret Nothing) = Nothing

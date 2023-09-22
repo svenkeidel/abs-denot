@@ -2,7 +2,6 @@ module Expr where
 
 import Control.Monad
 import Data.Foldable
-import qualified Data.Map as Map
 import Debug.Trace
 import qualified Text.ParserCombinators.ReadPrec as Read
 import qualified Text.ParserCombinators.ReadP as ReadP
@@ -21,29 +20,45 @@ assertMsg False msg _ = error ("assertion failure: " ++ msg)
 traceWith :: (t -> String) -> t -> t
 traceWith f a = trace (f a) a
 
-type Name = String
+type Name = String -- [a-z][a-zA-Z0-9]+
+data ConTag
+  = F | T | None | Some | Pair
+  deriving (Show, Read, Eq, Ord, Enum, Bounded)
+
+conArity :: ConTag -> Int
+conArity Pair = 2
+conArity Some = 1
+conArity _ = 0
 
 data Expr
   = Var Name
   | App Expr Name
   | Lam Name Expr
   | Let Name Expr Expr
+  | ConApp ConTag [Name]
+  | Case Expr [Alt]
+type Alt = (ConTag,[Name],Expr)
 
-instance Eq Expr where
-  e1 == e2 = go Map.empty Map.empty e1 e2
-    where
-      occ benv x = maybe (Left x) Right (Map.lookup x benv)
-      go benv1 benv2 e1 e2 = case (e1,e2) of
-        (Var x, Var y)         -> occ benv1 x == occ benv2 y
-        (App f x, App g y)     -> occ benv1 x == occ benv2 y && go benv1 benv2 f g
-        (Let x e1 e2, Let y e3 e4) -> go benv1' benv2' e1 e3 && go benv1' benv2' e2 e4
-          where
-            benv1' = Map.insert x (Map.size benv1) benv1
-            benv2' = Map.insert y (Map.size benv2) benv2
-        (Lam x e1', Lam y e2') -> go (Map.insert x (Map.size benv1) benv1)
-                                     (Map.insert y (Map.size benv2) benv2)
-                                     e1' e2'
-        _                      -> False
+isVal :: Expr -> Bool
+isVal Lam{}    = True
+isVal ConApp{} = True
+isVal _        = False
+
+-- instance Eq Expr where
+--   e1 == e2 = go Map.empty Map.empty e1 e2
+--     where
+--       occ benv x = maybe (Left x) Right (Map.lookup x benv)
+--       go benv1 benv2 e1 e2 = case (e1,e2) of
+--         (Var x, Var y)         -> occ benv1 x == occ benv2 y
+--         (App f x, App g y)     -> occ benv1 x == occ benv2 y && go benv1 benv2 f g
+--         (Let x e1 e2, Let y e3 e4) -> go benv1' benv2' e1 e3 && go benv1' benv2' e2 e4
+--           where
+--             benv1' = Map.insert x (Map.size benv1) benv1
+--             benv2' = Map.insert y (Map.size benv2) benv2
+--         (Lam x e1', Lam y e2') -> go (Map.insert x (Map.size benv1) benv1)
+--                                      (Map.insert y (Map.size benv2) benv2)
+--                                      e1' e2'
+--         _                      -> False
 
 appPrec, lamPrec :: Read.Prec
 lamPrec = Read.minPrec
@@ -55,11 +70,29 @@ instance Show Expr where
   showsPrec p (App f arg)  = showParen (p > appPrec) $
     showsPrec appPrec f . showString " " . showString arg
   showsPrec p (Lam b body) = showParen (p > lamPrec) $
-    showString "λ" . showString b . showString "." . showsPrec lamPrec body
+    showString "λ" . showString b . showString ". " . showsPrec lamPrec body
   showsPrec p (Let x e1 e2) = showParen (p > lamPrec) $
     showString "let " . showString x
     . showString " = " . showsPrec lamPrec e1
     . showString " in " . showsPrec lamPrec e2
+  showsPrec _ (ConApp k xs) =
+    shows k
+    . showString "("
+    . showSep (showString ",") (map showString xs)
+    . showString ")"
+  showsPrec p (Case e alts) = showParen (p > appPrec) $
+    showString "case " . showsPrec lamPrec e
+    . showString " of { "
+    . showSep (showString ";") (map showAlt alts)
+    . showString "}"
+
+showAlt :: Alt -> ShowS
+showAlt (k,xs,rhs) = shows (ConApp k xs) . showString " -> " . showsPrec lamPrec rhs
+
+showSep :: ShowS -> [ShowS] -> ShowS
+showSep _   [] = id
+showSep _   [s] = s
+showSep sep (s:ss) = s . sep . showString " " . showSep sep ss
 
 -- | The default 'ReadP.many1' function leads to ambiguity. What a terrible API.
 greedyMany, greedyMany1 :: ReadP.ReadP a -> ReadP.ReadP [a]
@@ -86,6 +119,8 @@ greedyMany1 p = (:) <$> p <*> greedyMany p
 --
 -- >>> read "let x = λa. let y = y in a in g z" :: Expr
 -- let x = λa. let y = y in a in g z
+--
+-- >>> read "case λa.x of { Pair( x , y ) -> λa. let y = Pair(y,y) in g z }" :: Expr
 instance Read Expr where
   readPrec = Read.parens $ Read.choice
     [ Var <$> readName
@@ -112,17 +147,37 @@ instance Read Expr where
         Read.Ident "in" <- Read.lexP
         e2 <- Read.readPrec
         pure (Let x e1 e2)
+    , do
+        k :: ConTag <- Read.readPrec
+        Read.Punc "(" <- Read.lexP
+        let comma = ReadP.skipSpaces >> ReadP.char ',' >> ReadP.skipSpaces
+        xs <- Read.readP_to_Prec $ \_ ->
+          ReadP.sepBy (Read.readPrec_to_P readName lamPrec) comma
+        Read.Punc ")" <- Read.lexP
+        pure (ConApp k xs)
+    , Read.prec lamPrec $ do
+        Read.Ident "case" <- Read.lexP
+        e <- Read.readPrec
+        Read.Ident "of" <- Read.lexP
+        Read.Punc "{" <- Read.lexP
+        let semi = ReadP.skipSpaces >> ReadP.char ';' >> ReadP.skipSpaces
+        alts <- Read.readP_to_Prec $ \_ ->
+          ReadP.sepBy (Read.readPrec_to_P readAlt lamPrec) semi
+        Read.Punc "}" <- Read.lexP
+        pure (Case e alts)
     ]
     where
       readName = do
         Read.Ident v <- Read.lexP
-        guard (not $ v `elem` ["let","in"])
+        guard (not $ v `elem` ["let","in","case","of"])
+        guard (not $ head v `elem` "λΛ@#5\\")
+        guard (isLower $ head v) -- Ensures that there is no clash with ConTag
         guard (all isAlphaNum v)
         pure v
-
-isVal :: Expr -> Bool
-isVal Lam{} = True
-isVal _     = False
-
-type Addr = Int
+      readAlt = do
+        ConApp k xs <- Read.readPrec
+        Read.Punc p <- Read.lexP
+        guard (p `elem` ["->","→"])
+        e <- Read.readPrec
+        pure (k,xs,e)
 
