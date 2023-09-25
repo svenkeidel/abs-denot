@@ -14,7 +14,6 @@ import qualified Data.Set as Set
 import Debug.Trace
 import Expr
 import Bare
-import Eventful
 import NaiveUsage
 import PrefixTrace
 import System.IO
@@ -44,6 +43,10 @@ e_fresh = read " let id = (λa. let y = a in y) in \
                        \ let d = id id in \
                        \ let e = id z in \
                        \ d e d"
+
+e_share :: Expr
+-- The simplest program where we can observe sharing
+e_share = read "let x = (λy.λz.z) x in x x"
 
 e_abs :: Expr
 e_abs = read "let id = λx.x in let const = λy.λz.y in const const id"
@@ -92,7 +95,7 @@ e_clairvoyant_loop :: Expr
 e_clairvoyant_loop = read "let i = λx.x in let ω = λy.y y in ω ω"
 
 main :: IO ()
-main = forM_ [e_2, e_3, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_lam] $ \e -> do
+main = forM_ [e_2, e_3, e_share, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_lam] $ \e -> do
   putStrLn ""
   putStrLn "------------------------------"
   print e
@@ -104,18 +107,13 @@ main = forM_ [e_2, e_3, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_lam] $ \e 
 --  print $ Bare.boundT 40 $ Bare.evalByValue e
 --  print $ Bare.boundT 40 $ Bare.evalClairvoyant e
   putStrLn "----------------"
-  putStrLn "     Eventful"
-  putStrLn "----------------"
-  print $ Eventful.boundT 40 $ Eventful.evalByName e
-  print $ Eventful.boundT 40 $ Eventful.evalByNeed e
-  print $ Eventful.boundT 40 $ Eventful.evalByValue e
-  -- print $ Eventful.boundT 40 $ Eventful.evalClairvoyant e
-  putStrLn "----------------"
   putStrLn "     PrefixTrace"
   putStrLn "----------------"
-  -- mapM_ print $ take 30 $ PrefixTrace.evalByName @UTrace e
-  print $ take 15 $ PrefixTrace.evalByNeed @UTrace e
-  -- mapM_ print $ take 30 $ PrefixTrace.evalByValue @UTrace e
+  print $ PrefixTrace.evalLog PrefixTrace.evalByName 40 e
+  print $ PrefixTrace.evalLog PrefixTrace.evalByNeed 40 e
+  print $ PrefixTrace.evalLog PrefixTrace.evalByValue 40 e
+  print $ PrefixTrace.evalLog PrefixTrace.evalClairvoyant 40 e
+  print $ PrefixTrace.evalByNeed @UTrace 15 e
 --  putStrLn "----------------"
 --  putStrLn "    UTrace"
 --  putStrLn "----------------"

@@ -5,68 +5,87 @@ import Prelude hiding (lookup)
 import Expr
 import Template
 import Control.Monad.Fix
+import Later
+import Data.Functor.Identity
 
-data Bare a = Delay (Bare a) | Ret !a | Stuck
+data Bare l a = Delay (l (Bare l a)) | Ret !a | Stuck
   deriving Functor
+type LBare = Bare Later
+type IBare = Bare Identity
 
-instance Show a => Show (Bare a) where
-  show (Delay trc) = 'L':show trc
+instance Show a => Show (Bare Later a) where
+  show (Delay trc) = 'L':show (trc unsafeTick)
   show Stuck = "🗲"
   show (Ret a) = '⟨':show a++"⟩"
 
-instance Applicative Bare where
+instance Show a => Show (Bare Identity a) where
+  show (Delay (Identity trc)) = 'L':show trc
+  show Stuck = "🗲"
+  show (Ret a) = '⟨':show a++"⟩"
+
+instance Functor l => Applicative (Bare l) where
   pure = Ret
-  Delay f <*> a = Delay (f <*> a)
+  Delay f <*> a = Delay (fmap (<*> a) f)
+--  Delay f <*> a = Delay (\α -> (f α) <*> a)
   Stuck <*> _ = Stuck
-  f <*> Delay a = Delay (f <*> a)
+  f <*> Delay a = Delay (fmap (f <*>) a)
+--  f <*> Delay a = Delay (\α -> f <*> a α)
   _ <*> Stuck = Stuck
   Ret f <*> Ret a = Ret (f a)
 
-instance Monad Bare where
+instance Functor l => Monad (Bare l) where
   Stuck >>= _ = Stuck
-  Delay d >>= k = Delay (d >>= k)
+  Delay d >>= k = Delay (fmap (>>= k) d)
   Ret a >>= k = k a
 
-instance MonadFix Bare where
+-- | This instance is the correct 'mfix' implementation for 'Bare',
+-- yet it is not typeable in a Guarded Type Theory.
+-- See the remarks in 'MonadAlloc Later CallByValue'.
+instance MonadFix LBare where
   mfix f = trc
     where
       (trc,v) = go (f v)
-      go (Delay t) = (Delay t', v)
+      go (Delay t) = (Delay (pure t'), v)
         where
-          (t', v) = go t
+          -- Passing unsafeTick here bypasses the Later modality!
+          -- Without it, we wouldn't be able to access v without a Later.
+          (t', v) = go (t unsafeTick)
       go (Ret v) = (Ret v, v)
       go Stuck = (Stuck, undefined)
 
-instance MonadTrace Bare where
+instance Applicative l => MonadTrace l (Bare l) where
   stuck = Stuck
   lookup _ = Delay
-  update = Delay
-  app1 = Delay
-  app2 = Delay
-  bind = Delay
-  case1 = Delay
-  case2 = Delay
+  app1 = Delay . pure
+  app2 = Delay . pure
+  bind = Delay . pure
+  case1 = Delay . pure
+  case2 = Delay . pure
+  update = Delay . pure
+  let_ = Delay . pure
 
-instance MonadRecord Bare where
+instance MonadRecord LBare where
   recordIfJust (Ret Nothing) = Nothing
   recordIfJust (Ret (Just a)) = Just (Ret a)
   recordIfJust Stuck = Just Stuck
-  recordIfJust (Delay t) = Delay <$> recordIfJust t
+  recordIfJust (Delay t) = Delay . pure <$> (recordIfJust (t unsafeTick)) -- wildly unproductive! This is the culprit of Clairvoyant CbV
 
-
-boundT :: Int -> Bare v -> Maybe (Bare v)
+-- | Primary way to turn a coinductive trace 'LBare' into an inductive trace
+-- 'IBare'.
+boundT :: Int -> LBare v -> Maybe (IBare v)
 boundT 0 _ = Nothing
-boundT n (Delay t) = Delay <$> boundT (n-1) t
-boundT _ t = Just t
+boundT n (Delay t) = Delay . Identity <$> boundT (n-1) (t unsafeTick)
+boundT _ Stuck = Just Stuck
+boundT _ (Ret v) = Just (Ret v)
 
-evalByName :: Expr -> Bare (Value (ByName Bare))
+evalByName :: Expr -> LBare (Value (ByName LBare))
 evalByName = Template.evalByName
 
-evalByNeed :: Expr -> Bare (Value (ByNeed Bare), Heap (ByNeed Bare))
+evalByNeed :: Expr -> LBare (Value (ByNeed LBare), Heap (ByNeed LBare))
 evalByNeed = Template.evalByNeed
 
-evalByValue :: Expr -> Bare (Value (ByValue Bare))
+evalByValue :: Expr -> LBare (Value (ByValue LBare))
 evalByValue = Template.evalByValue
 
-evalClairvoyant :: Expr -> Bare (Value (Clairvoyant Bare))
+evalClairvoyant :: Expr -> LBare (Value (Clairvoyant LBare))
 evalClairvoyant = Template.evalClairvoyant

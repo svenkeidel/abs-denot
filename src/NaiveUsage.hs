@@ -11,6 +11,7 @@ import qualified Data.Map.Strict as S
 import Data.Coerce
 import GHC.Show
 import Control.Monad
+import Data.Functor.Identity
 
 -- Challenges:
 -- 1. How to communicate the address to lookup?
@@ -110,21 +111,22 @@ instance Monad UTrace where
 add :: Us -> Name -> Us
 add us x = S.alter (\e -> Just $ case e of Just u -> u +# O; Nothing -> O) x us
 
-instance MonadTrace UTrace where
+instance MonadTrace Identity UTrace where
   stuck = UT S.empty Bot
-  lookup x (UT us a) = UT (add us x) a
-  update = id
+  lookup x (Identity (UT us a)) = UT (add us x) a
   app1 = id
   app2 = id
   bind = id
   case1 = id
   case2 = id
+  update = id
+  let_ = id
 
-evalByName :: Expr -> UTrace (Value (ByName UTrace))
-evalByName = Template.evalByName
+-- evalByName :: Expr -> UTrace (Value (ByName UTrace))
+-- evalByName = Template.evalByName
 
-evalByNeed :: Expr -> UTrace (Value (ByNeed UTrace), Heap (ByNeed UTrace))
-evalByNeed = Template.evalByNeed
+-- evalByNeed :: Expr -> UTrace (Value (ByNeed UTrace), Heap (ByNeed UTrace))
+-- evalByNeed = Template.evalByNeed
 
 -- evalByValue :: Expr -> UTrace (Value (ByValue UTrace))
 -- evalByValue = Template.evalByValue
@@ -134,10 +136,10 @@ evalByNeed = Template.evalByNeed
 -- UTrace
 -----------------------
 
-instance MonadAlloc UTrace where
+instance MonadAlloc Identity UTrace where
   alloc f = do
-    let us = kleeneFix (\us -> evalDeep (f (UT us Nop)))
-    pure (UT us Nop)
+    let us = kleeneFix (\us -> evalDeep (f (Identity (UT us Nop))))
+    pure (Identity (UT us Nop))
 
 kleeneFix :: (Complete l, LowerBounded l) => (l -> l) -> l
 kleeneFix f = go (f bottom)

@@ -62,11 +62,10 @@ library
     exposed-modules:  Expr,
                       Template,
                       Bare,
-                      Eventful,
-                      -- Usage,
                       NaiveUsage,
                       PrefixTrace,
                       Order,
+                      Later,
                       Play
 
     -- Modules included in this library but not exported.
