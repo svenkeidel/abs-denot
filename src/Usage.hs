@@ -14,13 +14,6 @@ import GHC.Show
 import Control.Monad
 import Data.Functor.Identity
 
--- Challenges:
--- 1. How to communicate the address to lookup?
---    Perhaps pass whole "state"? What does that mean?
---    Perhaps pass entry in env? Yes, can reconstruct address from memo
---    Can probably key the map by denotation of form memo(a,_) and factor through Addr -> L!
---
-
 data U = Z | O | W -- 0 | 1 | ω
   deriving Eq
 
@@ -58,7 +51,7 @@ instance Show U where
 -----------------------
 
 data Usg a = Usg Us !a
-  deriving Functor
+  deriving (Eq,Functor)
 
 instance Show a => Show (Usg a) where
   show (Usg us val) = show us ++ show val
@@ -102,9 +95,10 @@ instance MonadTrace Usg where
 ---------------
 
 data AbsVal = Nop
+  deriving Eq
 
 instance Show AbsVal where
-  show Nop = "T"
+  show Nop = ""
 
 instance IsValue Usg AbsVal where
   stuck = return Nop
@@ -125,7 +119,7 @@ O *# us = us
 W *# us = S.map (const W) us
 
 instance PreOrd (Usg AbsVal) where
-  Usg us1 Nop ⊑ Usg us2 Nop = us1 ⊑ us2
+  l ⊑ r = l ⊔ r == r
 
 instance LowerBounded (Usg AbsVal) where
   bottom = Usg bottom Nop

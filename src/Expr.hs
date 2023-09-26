@@ -84,7 +84,7 @@ instance Show Expr where
     showString "case " . showsPrec lamPrec e
     . showString " of { "
     . showSep (showString ";") (map showAlt alts)
-    . showString "}"
+    . showString " }"
 
 showAlt :: Alt -> ShowS
 showAlt (k,xs,rhs) = shows (ConApp k xs) . showString " -> " . showsPrec lamPrec rhs
@@ -121,6 +121,10 @@ greedyMany1 p = (:) <$> p <*> greedyMany p
 -- let x = λa. let y = y in a in g z
 --
 -- >>> read "case λa.x of { Pair( x , y ) -> λa. let y = Pair(y,y) in g z }" :: Expr
+-- case λa. x of { Pair(x, y) -> λa. let y = Pair(y, y) in g z }
+--
+-- >>> read "let x = T() in let o = Some(x) in case o of { None() -> F(); Some(y) -> y }" :: Expr
+-- let x = T() in let o = Some(x) in case o of { None() -> F(); Some(y) -> y }
 instance Read Expr where
   readPrec = Read.parens $ Read.choice
     [ Var <$> readName

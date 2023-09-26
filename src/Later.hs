@@ -13,6 +13,9 @@ type Later = (->) Tick
 -- can't be properly type-checked in Haskell).
 -- The difference is hardly worth the bother...
 
+instance Show a => Show (Later a) where
+  show l = "L(" ++ show (l unsafeTick) ++ ")"
+
 löb :: (Later a -> a) -> a
 löb f = let x = f (pure x) in x
 

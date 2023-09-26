@@ -63,6 +63,7 @@ library
                       Template,
                       Bare,
                       Usage,
+                      Types,
                       PrefixTrace,
                       Order,
                       Later,

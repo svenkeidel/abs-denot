@@ -15,6 +15,7 @@ import Debug.Trace
 import Expr
 import Bare
 import Usage
+import Types
 import PrefixTrace
 import System.IO
 
@@ -94,18 +95,21 @@ e_bug2 = read "let a = a in let b = let c = a in a in b"
 e_clairvoyant_loop :: Expr
 e_clairvoyant_loop = read "let i = λx.x in let ω = λy.y y in ω ω"
 
+e_type :: Expr
+e_type = read "let x = T() in let o = Some(x) in case o of { None() -> F(); Some(y) -> y }"
+
 main :: IO ()
-main = forM_ [e_2, e_3, e_share, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_lam] $ \e -> do
+main = forM_ [e_2, e_3, e_share, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_lam, e_type] $ \e -> do
   putStrLn ""
   putStrLn "------------------------------"
   print e
---  putStrLn "----------------"
---  putStrLn "     Bare"
---  putStrLn "----------------"
---  print $ Bare.boundT 40 $ Bare.evalByName e
---  print $ Bare.boundT 40 $ Bare.evalByNeed e
---  print $ Bare.boundT 40 $ Bare.evalByValue e
---  print $ Bare.boundT 40 $ Bare.evalClairvoyant e
+  putStrLn "----------------"
+  putStrLn "     Bare"
+  putStrLn "----------------"
+  print $ Bare.boundT 40 $ Bare.evalByName e
+  print $ Bare.boundT 40 $ Bare.evalByNeed e
+  print $ Bare.boundT 40 $ Bare.evalByValue e
+  print $ Bare.boundT 40 $ Bare.evalClairvoyant e
   putStrLn "----------------"
   putStrLn "     PrefixTrace"
   putStrLn "----------------"
@@ -126,4 +130,8 @@ main = forM_ [e_2, e_3, e_share, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_l
   putStrLn "    Naive AbsUsg"
   putStrLn "----------------"
   print $ Usage.evalAbsUsg e
+  putStrLn "----------------"
+  putStrLn "    Types"
+  putStrLn "----------------"
+  print $ Types.inferType e
   return ()
