@@ -25,7 +25,7 @@ import Data.Functor.Identity
 
 type D m = m (Value m)
 data Value m = Stuck | Fun (D m -> D m) | Con ConTag [D m]
-type Env a = S.Map Name a
+type Env = S.Map Name
 
 instance Show (Value m) where
   show (Fun _) = show "λ"
@@ -48,11 +48,11 @@ class (Functor (L m), Monad m) => MonadTrace m where
 -- is that we don't want to enumerate all of P(Value m) in the select case!
 -- So this is about efficiency -- Posets are quite an inefficient representaiton
 -- compared to symbolic reasoning (such as in GHC's `SubDemand`).
-class IsValue m v where
-  stuck :: m v
-  injFun :: (m v -> m v) -> v
+class Monad m => IsValue m v where
+  stuck :: m v -- stuck >>= k = stuck
+  injFun :: (m v -> m v) -> m v
   apply :: v -> m v -> m v
-  injCon :: ConTag -> [m v] -> v
+  injCon :: ConTag -> [m v] -> m v
   select :: v -> [(ConTag, [m v] -> m v)] -> m v
 
 class (MonadTrace m) => MonadAlloc m v where
@@ -64,7 +64,7 @@ eval e env = case e of
   App e x -> case S.lookup x env of
     Nothing -> stuck
     Just d  -> app1 (eval e env) >>= \v -> apply v d
-  Lam x e -> return (injFun (\d -> app2 (eval e (S.insert x d env))))
+  Lam x e -> injFun (\d -> app2 (eval e (S.insert x d env)))
   Let x e1 e2 -> do
     let ext d = S.insert x (lookup x d) env
     d1 <- alloc (\d1 -> eval e1 (ext d1))
@@ -72,7 +72,7 @@ eval e env = case e of
   ConApp k xs -> case traverse (env S.!?) xs of
     Just ds
       | length xs == conArity k
-      -> return (injCon k ds)
+      -> injCon k ds
     _ -> stuck
   Case e alts -> case1 $ eval e env >>= \v ->
     select v [ (k, alt_cont xs rhs) | (k,xs,rhs) <- alts ]
@@ -103,8 +103,8 @@ type MonadIndTrace m = (MonadTrace m, L m ~ Identity)
 
 instance MonadTrace m => IsValue m (Value m) where
   stuck = return Stuck
-  injFun = Fun
-  injCon = Con
+  injFun f = return (Fun f)
+  injCon k ds = return (Con k ds)
   apply (Fun f) d = f d
   apply _       _ = stuck
   select v alts

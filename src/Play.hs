@@ -113,7 +113,7 @@ main = forM_ [e_2, e_3, e_share, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_l
   print $ PrefixTrace.evalLog PrefixTrace.evalByNeed 40 e
   print $ PrefixTrace.evalLog PrefixTrace.evalByValue 40 e
   print $ PrefixTrace.evalLog PrefixTrace.evalClairvoyant 40 e
-  print $ PrefixTrace.evalByNeed @UTrace 15 e
+  print $ PrefixTrace.evalByNeed @Usg 15 e
 --  putStrLn "----------------"
 --  putStrLn "    UTrace"
 --  putStrLn "----------------"
@@ -122,5 +122,5 @@ main = forM_ [e_2, e_3, e_share, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_l
   putStrLn "----------------"
   putStrLn "    Naive"
   putStrLn "----------------"
-  print $ NaiveUsage.evalUTrace e
+  print $ NaiveUsage.evalAbsUsg e
   return ()

@@ -53,68 +53,30 @@ instance Show U where
   show O = "1"
   show W = "ω"
 
-data UVal a where
-  Bot :: UVal a
-  Nop :: UVal (Value UTrace)
-  Ret :: !a -> UVal a
+-----------------------
+-- Usg
+-----------------------
 
-data UTrace a = UT Us (UVal a)
+data Usg a = Usg Us !a
   deriving Functor
 
-instance Show a => Show (UVal a) where
-  show Bot = "🗲"
-  show Nop = "T"
-  show (Ret a) = '⟨':show a++"⟩"
+instance Show a => Show (Usg a) where
+  show (Usg us val) = show us ++ show val
 
-instance Show a => Show (UTrace a) where
-  show (UT us val) = show us ++ show val
-
-nopD :: D UTrace
-nopD = UT S.empty Nop
-
-evalDeep :: D UTrace -> Us
-evalDeep (UT us v) = go us v
-  where
-    go us Bot = us
-    go us Nop = us
-    go us (Ret (Fun f)) = case f nopD of
-      UT us2 v -> go (us .+. us2) v
-    go us (Ret (Con _ ds)) =
-      foldr (.+.) us $ map evalDeep ds
-
-manyfy :: Us -> Us
-manyfy = S.map (const W)
-
-nopFunVal :: Value UTrace
-nopFunVal = Fun (\d -> UT (manyfy (evalDeep d)) Nop)
-
-nopConVal :: ConTag -> Value UTrace
-nopConVal k = Con k (replicate (conArity k) nopD)
-
-nopVals :: [Value UTrace]
-nopVals = nopFunVal : map nopConVal [minBound..maxBound]
-
-instance Functor UVal where
-  fmap _ Bot = Bot
-  fmap f Nop = fmap f (Ret nopFunVal)
-  fmap f (Ret a) = Ret (f a)
-
-instance Applicative UTrace where
-  pure a = UT S.empty (Ret a)
+instance Applicative Usg where
+  pure a = Usg S.empty a
   (<*>) = ap
 
-instance Monad UTrace where
-  UT us1 Bot >>= _ = UT us1 Bot
-  UT us1 Nop >>= k = UT us1 (Ret nopFunVal) >>= k
-  UT us1 (Ret a) >>= k = case k a of
-    UT us2 b -> UT (us1 .+. us2) b
+instance Monad Usg where
+  Usg us1 a >>= k = case k a of
+    Usg us2 b -> Usg (us1 .+. us2) b
 
 add :: Us -> Name -> Us
 add us x = S.alter (\e -> Just $ case e of Just u -> u +# O; Nothing -> O) x us
 
-instance MonadTrace UTrace where
-  type L UTrace = Identity
-  lookup x (Identity (UT us a)) = UT (add us x) a
+instance MonadTrace Usg where
+  type L Usg = Identity
+  lookup x (Identity (Usg us a)) = Usg (add us x) a
   app1 = id
   app2 = id
   bind = id
@@ -123,29 +85,61 @@ instance MonadTrace UTrace where
   update = id
   let_ = id
 
--- evalByName :: Expr -> UTrace (Value (ByName UTrace))
+-- These won't work, because UTrace is an inductive trace type.
+-- Use PrefixTrace instead!
+--
+-- evalByName :: Expr -> Usg (Value (ByName Usg))
 -- evalByName = Template.evalByName
-
--- evalByNeed :: Expr -> UTrace (Value (ByNeed UTrace), Heap (ByNeed UTrace))
+--
+-- evalByNeed :: Expr -> Usg (Value (ByNeed Usg), Heap (ByNeed Usg))
 -- evalByNeed = Template.evalByNeed
-
--- evalByValue :: Expr -> UTrace (Value (ByValue UTrace))
+--
+-- evalByValue :: Expr -> Usg (Value (ByValue Usg))
 -- evalByValue = Template.evalByValue
 
+---------------
+-- AbsVal
+---------------
 
------------------------
--- UTrace
------------------------
+data AbsVal = Nop
 
-instance MonadAlloc UTrace (Value UTrace) where
-  alloc f = do
-    let us = kleeneFix (\us -> evalDeep (f (Identity (UT us Nop))))
-    pure (Identity (UT us Nop))
+instance Show AbsVal where
+  show Nop = "T"
+
+instance IsValue Usg AbsVal where
+  stuck = return Nop
+  injFun f = Usg (evalDeep (f nopD)) Nop
+  injCon _ ds = Usg (foldr (.+.) S.empty $ map evalDeep ds) Nop
+  apply Nop d = Usg (evalDeep d) Nop
+  select Nop fs = Usg (lub $ map (\(k,f) -> evalDeep (f (replicate (conArity k) nopD))) fs) Nop
+
+nopD :: Usg AbsVal
+nopD = Usg S.empty Nop
+
+evalDeep :: Usg AbsVal -> Us
+evalDeep (Usg us _) = W *# us
+
+(*#) :: U -> Us -> Us
+Z *# _  = S.empty
+O *# us = us
+W *# us = S.map (const W) us
+
+instance PreOrd (Usg AbsVal) where
+  Usg us1 Nop ⊑ Usg us2 Nop = us1 ⊑ us2
+
+instance LowerBounded (Usg AbsVal) where
+  bottom = Usg bottom Nop
+
+instance Complete (Usg AbsVal) where
+  Usg us1 Nop ⊔ Usg us2 Nop = Usg (us1 ⊔ us2) Nop
+
+instance MonadAlloc Usg AbsVal where
+  alloc f = pure $ Identity $ kleeneFix (f . Identity)
 
 kleeneFix :: (Complete l, LowerBounded l) => (l -> l) -> l
 kleeneFix f = go (f bottom)
   where
   go l = let l' = f l in if l' ⊑ l then l' else go l'
 
-evalUTrace :: Expr -> UTrace (Value UTrace)
-evalUTrace e = eval e S.empty
+evalAbsUsg :: Expr -> Usg AbsVal
+evalAbsUsg e = eval e S.empty
