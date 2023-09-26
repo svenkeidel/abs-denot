@@ -11,21 +11,18 @@ import Control.Monad.Trans.Writer
 
 type Evt f = forall v. f v -> f v
 
-data PrefixTrace f v = Step (Evt f) (Later (PrefixTrace f v)) | Ret !v | Stuck
+data PrefixTrace f v = Step (Evt f) (Later (PrefixTrace f v)) | End !v
   deriving (Functor)
 
 instance Applicative (PrefixTrace f) where
-  pure = Ret
+  pure = End
   Step s f <*> a = Step s (fmap (<*> a) f)
-  Stuck <*> _ = Stuck
   f <*> Step s a = Step s (fmap (f <*>) a)
-  _ <*> Stuck = Stuck
-  Ret f <*> Ret a = Ret (f a)
+  End f <*> End a = End (f a)
 
 instance Monad (PrefixTrace f) where
-  Stuck >>= _ = Stuck
   Step s d >>= k = Step s (fmap (>>= k) d)
-  Ret a >>= k = k a
+  End a >>= k = k a
 
 instance MonadFix (PrefixTrace f) where
   mfix f = trc
@@ -34,12 +31,10 @@ instance MonadFix (PrefixTrace f) where
       go (Step s t) = (Step s (pure t'), v)
         where
           (t', v) = go (t unsafeTick)
-      go (Ret v) = (Ret v, v)
-      go Stuck = (Stuck, undefined)
+      go (End v) = (End v, v)
 
 instance (MonadIndTrace m) => MonadTrace (PrefixTrace m) where
   type L (PrefixTrace m) = Later
-  stuck = Stuck
   lookup x = Step (lookup x . Identity)
   app1 = Step app1 . pure
   app2 = Step app2 . pure
@@ -50,9 +45,8 @@ instance (MonadIndTrace m) => MonadTrace (PrefixTrace m) where
   let_ = Step let_ . pure
 
 instance MonadRecord (PrefixTrace m) where
-  recordIfJust (Ret Nothing) = Nothing
-  recordIfJust (Ret (Just a)) = Just (Ret a)
-  recordIfJust Stuck = Just Stuck
+  recordIfJust (End Nothing) = Nothing
+  recordIfJust (End (Just a)) = Just (End a)
   recordIfJust (Step f s) = Step f . pure <$> (recordIfJust (s unsafeTick)) -- wildly unproductive! This is the culprit of Clairvoyant CbV
 
 -- | Potentitally infinite list; use take on result
@@ -84,7 +78,6 @@ log = LogEvents . tell
 
 instance MonadTrace LogEvents where
   type L LogEvents = Identity
-  stuck = log "🗲" >> return undefined
   lookup x (Identity m) = log "L" >> m
   app1 m = log "a" >> m
   app2 m = log "A" >> m

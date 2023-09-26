@@ -114,7 +114,6 @@ add us x = S.alter (\e -> Just $ case e of Just u -> u +# O; Nothing -> O) x us
 
 instance MonadTrace UTrace where
   type L UTrace = Identity
-  stuck = UT S.empty Bot
   lookup x (Identity (UT us a)) = UT (add us x) a
   app1 = id
   app2 = id
@@ -138,7 +137,7 @@ instance MonadTrace UTrace where
 -- UTrace
 -----------------------
 
-instance MonadAlloc UTrace where
+instance MonadAlloc UTrace (Value UTrace) where
   alloc f = do
     let us = kleeneFix (\us -> evalDeep (f (Identity (UT us Nop))))
     pure (Identity (UT us Nop))

@@ -22,21 +22,18 @@ import qualified Data.List as List
 import Later
 import Data.Kind
 import Data.Functor.Identity
-import Control.Monad.Trans.Reader
-import Control.Monad.Trans.Maybe
-import Control.Monad.Trans.Class
 
 type D m = m (Value m)
-data Value m = Fun (D m -> D m) | Con ConTag [D m]
-type Env m = S.Map Name (D m)
+data Value m = Stuck | Fun (D m -> D m) | Con ConTag [D m]
+type Env a = S.Map Name a
 
 instance Show (Value m) where
-  show (Fun _) = show "Fun"
+  show (Fun _) = show "λ"
   show (Con k _) = show k
+  show Stuck = "🗲"
 
 class (Functor (L m), Monad m) => MonadTrace m where
   type L m :: Type -> Type
-  stuck :: m v
   lookup :: Name -> L m (m v) -> m v
   app1 :: m v -> m v
   app2 :: m v -> m v
@@ -46,18 +43,28 @@ class (Functor (L m), Monad m) => MonadTrace m where
   let_ :: m v -> m v
   update :: m v -> m v
 
-class MonadTrace m => MonadAlloc m where
-  alloc :: (L m (D m) -> D m) -> m (L m (D m))
+-- | The reason we have a full type class rather than just a Galois Connection
+--   P(Value m) <-> Val m (where Val is the abstract value)
+-- is that we don't want to enumerate all of P(Value m) in the select case!
+-- So this is about efficiency -- Posets are quite an inefficient representaiton
+-- compared to symbolic reasoning (such as in GHC's `SubDemand`).
+class IsValue m v where
+  stuck :: m v
+  injFun :: (m v -> m v) -> v
+  apply :: v -> m v -> m v
+  injCon :: ConTag -> [m v] -> v
+  select :: v -> [(ConTag, [m v] -> m v)] -> m v
 
-eval :: forall m. (MonadAlloc m, MonadTrace m) => Expr -> Env m -> D m
+class (MonadTrace m) => MonadAlloc m v where
+  alloc :: (L m (m v) -> m v) -> m (L m (m v))
+
+eval :: forall m v. (MonadTrace m, IsValue m v, MonadAlloc m v) => Expr -> Env (m v) -> m v
 eval e env = case e of
   Var x -> S.findWithDefault stuck x env
   App e x -> case S.lookup x env of
     Nothing -> stuck
-    Just d  -> app1 (eval e env) >>= \case
-      Fun f -> f d
-      _     -> stuck
-  Lam x e -> return (Fun (\d -> app2 (eval e (S.insert x d env))))
+    Just d  -> app1 (eval e env) >>= \v -> apply v d
+  Lam x e -> return (injFun (\d -> app2 (eval e (S.insert x d env))))
   Let x e1 e2 -> do
     let ext d = S.insert x (lookup x d) env
     d1 <- alloc (\d1 -> eval e1 (ext d1))
@@ -65,18 +72,27 @@ eval e env = case e of
   ConApp k xs -> case traverse (env S.!?) xs of
     Just ds
       | length xs == conArity k
-      -> return (Con k ds)
+      -> return (injCon k ds)
     _ -> stuck
-  Case e alts -> case1 $ eval e env >>= \case
-    Con k ds
-      | Just (_,xs,rhs) <- List.find (\(k',_,_) -> k' == k) alts
-      , length xs == length ds
-      , length xs == conArity k
-      -> case2 (eval rhs (insertMany env xs ds))
-    _ -> stuck
+  Case e alts -> case1 $ eval e env >>= \v ->
+    select v [ (k, alt_cont xs rhs) | (k,xs,rhs) <- alts ]
     where
-      insertMany :: Env m -> [Name] -> [D m] -> Env m
+      alt_cont xs rhs ds
+        | length xs == length ds = case2 (eval rhs (insertMany env xs ds))
+        | otherwise              = stuck
+      insertMany :: Env (m v) -> [Name] -> [m v] -> Env (m v)
       insertMany env xs ds = foldr (uncurry S.insert) env (zip xs ds)
+
+--  Case e alts -> case1 $ eval e env >>= \case
+--    Con k ds
+--      | Just (_,xs,rhs) <- List.find (\(k',_,_) -> k' == k) alts
+--      , length xs == length ds
+--      , length xs == conArity k
+--      -> case2 (eval rhs (insertMany env xs ds))
+--    _ -> stuck
+--    where
+--      insertMany :: Env m -> [Name] -> [D m] -> Env m
+--      insertMany env xs ds = foldr (uncurry S.insert) env (zip xs ds)
 
 -- | The type of coinductive traces, in the sense that @MonadCoindTrace m => m@
 -- denotes a potentially infinite program trace.
@@ -84,6 +100,19 @@ type MonadCoindTrace m = (MonadTrace m, L m ~ Later)
 -- | The type of inductive traces, in the sense that @MonadIndTrace m => m@
 -- denotes a finite program trace.
 type MonadIndTrace m = (MonadTrace m, L m ~ Identity)
+
+instance MonadTrace m => IsValue m (Value m) where
+  stuck = return Stuck
+  injFun = Fun
+  injCon = Con
+  apply (Fun f) d = f d
+  apply _       _ = stuck
+  select v alts
+    | Con k ds <- v
+    , Just (_,alt) <- List.find (\(k',_) -> k' == k) alts
+    = alt ds
+    | otherwise
+    = stuck
 
 -----------------------
 -- By-name
@@ -99,7 +128,6 @@ liftNameL f = ByName . f . fmap unByName
 
 instance MonadCoindTrace m => MonadTrace (ByName m) where
   type L (ByName m) = Later
-  stuck = ByName stuck
   lookup x = liftNameL (lookup x)
   app1 = liftName app1
   app2 = liftName app2
@@ -109,7 +137,7 @@ instance MonadCoindTrace m => MonadTrace (ByName m) where
   update = liftName update
   let_ = liftName let_
 
-instance (MonadTrace (ByName m)) => MonadAlloc (ByName m) where
+instance (MonadTrace (ByName m)) => MonadAlloc (ByName m) (Value (ByName m)) where
   alloc f = pure (\_α -> (löb f))
 
 instance Show (ByName m a) where
@@ -120,7 +148,7 @@ instance Show (ByName m a) where
 -- By-need
 -----------------------
 type Addr = Int
-type Heap m = L.IntMap (Later (D m)) -- Addr -> D m
+type Heap m = L.IntMap (Later (D m)) -- Addr -> Later a
 newtype ByNeed m a = ByNeed { unByNeed :: StateT (Heap (ByNeed m)) m a }
   deriving newtype (Functor,Applicative,Monad)
 
@@ -132,7 +160,6 @@ liftNeedL f m = ByNeed (StateT (\h -> f (fmap (($ h) . runStateT . unByNeed) m))
 
 instance MonadCoindTrace m => MonadTrace (ByNeed m) where
   type L (ByNeed m) = Later
-  stuck = ByNeed (StateT (const stuck))
   lookup x = liftNeedL (lookup x)
   app1 = liftNeed app1
   app2 = liftNeed app2
@@ -154,7 +181,7 @@ memo a d = do
     ByNeed $ modify (L.insert a (\_α -> (return v)))
     return v
 
-instance MonadCoindTrace m => MonadAlloc (ByNeed m) where
+instance MonadCoindTrace m => MonadAlloc (ByNeed m) (Value (ByNeed m)) where
   alloc f = do
     a <- ByNeed $ maybe 0 (\(k,_) -> k+1) . L.lookupMax <$> get
     let ld = fetch a
@@ -179,7 +206,6 @@ liftValueL f = ByValue . f . fmap unByValue
 
 instance MonadCoindTrace m => MonadTrace (ByValue m) where
   type L (ByValue m) = Later
-  stuck = ByValue stuck
   lookup x = liftValueL (lookup x)
   app1 = liftValue app1
   app2 = liftValue app2
@@ -189,7 +215,7 @@ instance MonadCoindTrace m => MonadTrace (ByValue m) where
   update = liftValue update
   let_ = liftValue let_
 
-instance (MonadFix m, MonadTrace m, L m ~ Later) => MonadAlloc (ByValue m) where
+instance (MonadFix m, MonadTrace m, L m ~ Later) => MonadAlloc (ByValue m) (Value (ByValue m)) where
   -- | `mfix` is generally untypable in guarded type theory.
   -- We'd need to communicate the number of steps that `m v` needs
   -- to produce the value `Later v`, and the `Later v` can only be used
@@ -285,7 +311,6 @@ liftClairL f lm = Clairvoyant $ ParT $ f $ fmap (unParT . unClair) lm
 
 instance MonadCoindTrace m => MonadTrace (Clairvoyant m) where
   type L (Clairvoyant m) = Later
-  stuck = Clairvoyant (ParT stuck)
   lookup x = liftClairL (lookup x)
   app1 = liftClair app1
   app2 = liftClair app2
@@ -295,7 +320,7 @@ instance MonadCoindTrace m => MonadTrace (Clairvoyant m) where
   update = liftClair update
   let_ = liftClair let_
 
-instance forall m. (MonadFix m, MonadTrace m, L m ~ Later) => MonadAlloc (Clairvoyant m) where
+instance forall m. (MonadFix m, MonadTrace m, L m ~ Later) => MonadAlloc (Clairvoyant m) (Value (Clairvoyant m)) where
   alloc f = Clairvoyant (skip <|> let')
     where
       skip = return (\_α -> Clairvoyant empty)
