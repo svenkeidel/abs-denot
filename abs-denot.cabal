@@ -62,7 +62,7 @@ library
     exposed-modules:  Expr,
                       Template,
                       Bare,
-                      NaiveUsage,
+                      Usage,
                       PrefixTrace,
                       Order,
                       Later,

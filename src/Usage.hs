@@ -1,13 +1,18 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeFamilies #-}
 module Usage where
 
 import Prelude hiding (lookup)
 import Expr
 import Template
+import Order
 import qualified Data.Map.Strict as S
 import Data.Coerce
+import GHC.Show
+import Control.Monad
+import Data.Functor.Identity
 
 -- Challenges:
 -- 1. How to communicate the address to lookup?
@@ -19,11 +24,17 @@ import Data.Coerce
 data U = Z | O | W -- 0 | 1 | ω
   deriving Eq
 
-(⊔) :: U -> U -> U
-Z ⊔ u = u
-u ⊔ Z = u
-O ⊔ O = O
-_ ⊔ _ = W
+instance PreOrd U where
+  l ⊑ r = l ⊔ r == r
+
+instance Complete U where
+  Z ⊔ u = u
+  u ⊔ Z = u
+  O ⊔ O = O
+  _ ⊔ _ = W
+
+instance LowerBounded U where
+  bottom = Z
 
 (+#) :: U -> U -> U
 O  +# O  = W
@@ -31,120 +42,104 @@ u1 +# u2 = u1 ⊔ u2
 
 type Us = S.Map Name U
 
-(.⊔.) :: Us -> Us -> Us
-(.⊔.) = S.unionWith (⊔)
-
 (.+.) :: Us -> Us -> Us
 (.+.) = S.unionWith (+#)
 
-data UTrace a where
-  Look :: Name -> UTrace a -> UTrace a
-  Other :: UTrace a -> UTrace a
-  Ret :: !a -> UTrace a
-  Bot :: UTrace a
-  Nop :: UTrace (Value UTrace)
+instance {-# OVERLAPPING #-} Show Us where
+  show = ($ []) . showList__ (\(k,v) -> (k ++) . ('↦':) . shows v) . S.toList
 
-instance Show a => Show (UTrace a) where
-  show (Look x trc) = show x ++ show trc
-  show (Other trc) = '.':show trc
-  show Bot = "🗲"
-  show Nop = "T"
-  show (Ret a) = '⟨':show a++"⟩"
+instance Show U where
+  show Z = "0"
+  show O = "1"
+  show W = "ω"
 
-nopVal :: Value UTrace
-nopVal = Fun (\d -> d >> d >> Nop)
+-----------------------
+-- Usg
+-----------------------
 
-instance Applicative UTrace where
-  pure = Ret
-  Look x f <*> a = Look x (f <*> a)
-  Other f <*> a = Other (f <*> a)
-  Bot <*> _ = Bot
-  f <*> Other a = Other (f <*> a)
-  f <*> Look x a = Look x (f <*> a)
-  _ <*> Bot = Bot
-  Nop <*> a = Ret nopVal <*> a
-  Ret f <*> Ret a = Ret (f a)
+data Usg a = Usg Us !a
+  deriving Functor
 
-instance Monad UTrace where
-  Bot >>= _ = Bot
-  Other d >>= k = Other (d >>= k)
-  Look x d >>= k = Look x (d >>= k)
-  Ret a >>= k = k a
+instance Show a => Show (Usg a) where
+  show (Usg us val) = show us ++ show val
 
-instance MonadTrace UTrace where
-  stuck = Bot
-  lookup = Look
-  update = Other
-  app1 = Other
-  app2 = Other
-  bind = Other
+instance Applicative Usg where
+  pure a = Usg S.empty a
+  (<*>) = ap
 
-evalByName :: Expr -> UTrace (Value (ByName UTrace))
-evalByName = Template.evalByName
+instance Monad Usg where
+  Usg us1 a >>= k = case k a of
+    Usg us2 b -> Usg (us1 .+. us2) b
 
-evalByNeed :: Expr -> UTrace (Value (ByNeed UTrace), Heap (ByNeed UTrace))
-evalByNeed = Template.evalByNeed
+add :: Us -> Name -> Us
+add us x = S.alter (\e -> Just $ case e of Just u -> u +# O; Nothing -> O) x us
 
--- evalByValue :: Expr -> UTrace (Value (ByValue UTrace))
+instance MonadTrace Usg where
+  type L Usg = Identity
+  lookup x (Identity (Usg us a)) = Usg (add us x) a
+  app1 = id
+  app2 = id
+  bind = id
+  case1 = id
+  case2 = id
+  update = id
+  let_ = id
+
+-- These won't work, because UTrace is an inductive trace type.
+-- Use PrefixTrace instead!
+--
+-- evalByName :: Expr -> Usg (Value (ByName Usg))
+-- evalByName = Template.evalByName
+--
+-- evalByNeed :: Expr -> Usg (Value (ByNeed Usg), Heap (ByNeed Usg))
+-- evalByNeed = Template.evalByNeed
+--
+-- evalByValue :: Expr -> Usg (Value (ByValue Usg))
 -- evalByValue = Template.evalByValue
 
+---------------
+-- AbsVal
+---------------
 
------------------------
--- Naive
------------------------
+data AbsVal = Nop
 
-newtype Naive a = Naive { unNaive :: (UTrace a) }
-  deriving newtype (Functor,Applicative,Monad)
+instance Show AbsVal where
+  show Nop = "T"
 
-instance MonadAlloc Naive where
-  alloc f =
-    pure (nopValN <$ fixIter (\d -> eval_deep (f (nopValN <$ d))))
+instance IsValue Usg AbsVal where
+  stuck = return Nop
+  injFun f = Usg (evalDeep (f nopD)) Nop
+  injCon _ ds = Usg (foldr (.+.) S.empty $ map evalDeep ds) Nop
+  apply Nop d = Usg (evalDeep d) Nop
+  select Nop fs = Usg (lub $ map (\(k,f) -> evalDeep (f (replicate (conArity k) nopD))) fs) Nop
 
-nopValN :: Value Naive
-nopValN = Fun (\d -> d >> d >> nopD)
+nopD :: Usg AbsVal
+nopD = Usg S.empty Nop
 
-nopD :: D Naive
-nopD = Naive nopValN
+evalDeep :: Usg AbsVal -> Us
+evalDeep (Usg us _) = W *# us
 
-eval_deep :: D Naive -> Naive ()
-eval_deep (Naive d) = Naive (go d)
+(*#) :: U -> Us -> Us
+Z *# _  = S.empty
+O *# us = us
+W *# us = S.map (const W) us
+
+instance PreOrd (Usg AbsVal) where
+  Usg us1 Nop ⊑ Usg us2 Nop = us1 ⊑ us2
+
+instance LowerBounded (Usg AbsVal) where
+  bottom = Usg bottom Nop
+
+instance Complete (Usg AbsVal) where
+  Usg us1 Nop ⊔ Usg us2 Nop = Usg (us1 ⊔ us2) Nop
+
+instance MonadAlloc Usg AbsVal where
+  alloc f = pure $ Identity $ kleeneFix (f . Identity)
+
+kleeneFix :: (Complete l, LowerBounded l) => (l -> l) -> l
+kleeneFix f = go (f bottom)
   where
-    go (Look x d) = Look x (go d)
-    go (Other d) = Other (go d)
-    go Bot = Bot
-    go (Ret (Fun f)) = go (unNaive (f nopD))
+  go l = let l' = f l in if l' ⊑ l then l' else go l'
 
-getD :: Naive () -> S.Map Name U
-getD (Naive d) = go S.empty d
-  where
-    add us x = S.alter (\e -> Just $ case e of Just u -> u +# O; Nothing -> O) x us
-    go us (Look x d) = go (add us x) d
-    go us (Other d) = go us d
-    go us (Ret _) = us
-    go us Bot = us
-
-(.<=.) :: Naive () -> Naive () -> Bool
-d .<=. d' = (getD d .⊔. getD d') == getD d'
-
-fixIter :: (Naive () -> Naive ()) -> Naive ()
-fixIter f = go (f (Naive Bot))
-  where
-    go d = let d' = f d in if d' .<=. d then d' else go d'
-
-thingNaive :: (forall v. UTrace v -> UTrace v) -> Naive v -> Naive v
-thingNaive f (Naive m) = Naive (f m)
-
-instance MonadTrace Naive where
-  stuck = Naive stuck
-  lookup x = thingNaive (lookup x)
-  update = thingNaive update
-  app1 = thingNaive app1
-  app2 = thingNaive app2
-  bind = thingNaive bind
-instance Show (Naive a) where
-  show _ = "_"
-
-evalNaive :: Expr -> UTrace (Value Naive)
-evalNaive e = unNaive $ eval e S.empty
-
-
+evalAbsUsg :: Expr -> Usg AbsVal
+evalAbsUsg e = eval e S.empty

@@ -14,8 +14,6 @@ import qualified Data.IntMap.Lazy as L
 import qualified Data.Map.Strict as S
 import Control.Monad
 import Control.Monad.Fix
-import Data.Coerce
-import Data.Maybe
 import Control.Applicative
 import Debug.Trace
 import qualified Data.List as List
@@ -47,7 +45,8 @@ class (Functor (L m), Monad m) => MonadTrace m where
 --   P(Value m) <-> Val m (where Val is the abstract value)
 -- is that we don't want to enumerate all of P(Value m) in the select case!
 -- So this is about efficiency -- Posets are quite an inefficient representaiton
--- compared to symbolic reasoning (such as in GHC's `SubDemand`).
+-- compared to symbolic reasoning (such as in GHC's `SubDemand` or the
+-- `AbsVal` instance in "Usage").
 class Monad m => IsValue m v where
   stuck :: m v -- stuck >>= k = stuck
   injFun :: (m v -> m v) -> m v

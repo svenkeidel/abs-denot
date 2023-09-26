@@ -14,7 +14,7 @@ import qualified Data.Set as Set
 import Debug.Trace
 import Expr
 import Bare
-import NaiveUsage
+import Usage
 import PrefixTrace
 import System.IO
 
@@ -113,6 +113,9 @@ main = forM_ [e_2, e_3, e_share, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_l
   print $ PrefixTrace.evalLog PrefixTrace.evalByNeed 40 e
   print $ PrefixTrace.evalLog PrefixTrace.evalByValue 40 e
   print $ PrefixTrace.evalLog PrefixTrace.evalClairvoyant 40 e
+  putStrLn "----------------"
+  putStrLn "     PrefixTrace Usg"
+  putStrLn "----------------"
   print $ PrefixTrace.evalByNeed @Usg 15 e
 --  putStrLn "----------------"
 --  putStrLn "    UTrace"
@@ -120,7 +123,7 @@ main = forM_ [e_2, e_3, e_share, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_l
 --  print $ Usage.evalByName e
 --  print $ Usage.evalByNeed e
   putStrLn "----------------"
-  putStrLn "    Naive"
+  putStrLn "    Naive AbsUsg"
   putStrLn "----------------"
-  print $ NaiveUsage.evalAbsUsg e
+  print $ Usage.evalAbsUsg e
   return ()
