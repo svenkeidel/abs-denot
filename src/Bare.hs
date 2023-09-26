@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 module Bare where
 
 import Prelude hiding (lookup)
@@ -53,7 +54,8 @@ instance MonadFix LBare where
       go (Ret v) = (Ret v, v)
       go Stuck = (Stuck, undefined)
 
-instance Applicative l => MonadTrace l (Bare l) where
+instance Applicative l => MonadTrace (Bare l) where
+  type L (Bare l) = l
   stuck = Stuck
   lookup _ = Delay
   app1 = Delay . pure

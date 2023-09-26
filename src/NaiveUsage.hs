@@ -1,6 +1,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeFamilies #-}
 module NaiveUsage where
 
 import Prelude hiding (lookup)
@@ -111,7 +112,8 @@ instance Monad UTrace where
 add :: Us -> Name -> Us
 add us x = S.alter (\e -> Just $ case e of Just u -> u +# O; Nothing -> O) x us
 
-instance MonadTrace Identity UTrace where
+instance MonadTrace UTrace where
+  type L UTrace = Identity
   stuck = UT S.empty Bot
   lookup x (Identity (UT us a)) = UT (add us x) a
   app1 = id
@@ -136,7 +138,7 @@ instance MonadTrace Identity UTrace where
 -- UTrace
 -----------------------
 
-instance MonadAlloc Identity UTrace where
+instance MonadAlloc UTrace where
   alloc f = do
     let us = kleeneFix (\us -> evalDeep (f (Identity (UT us Nop))))
     pure (Identity (UT us Nop))

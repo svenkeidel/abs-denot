@@ -1,7 +1,6 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
-{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 
 module Later (Later, Tick, löb, unsafeTick) where
 

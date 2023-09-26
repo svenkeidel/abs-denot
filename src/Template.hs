@@ -3,6 +3,7 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Template where
 
@@ -19,6 +20,11 @@ import Control.Applicative
 import Debug.Trace
 import qualified Data.List as List
 import Later
+import Data.Kind
+import Data.Functor.Identity
+import Control.Monad.Trans.Reader
+import Control.Monad.Trans.Maybe
+import Control.Monad.Trans.Class
 
 type D m = m (Value m)
 data Value m = Fun (D m -> D m) | Con ConTag [D m]
@@ -28,12 +34,10 @@ instance Show (Value m) where
   show (Fun _) = show "Fun"
   show (Con k _) = show k
 
-class Monad m => MonadAlloc l m where
-  alloc :: (l (D m) -> D m) -> m (l (D m))
-
-class (Applicative l, Monad m) => MonadTrace l m | m -> l where
+class (Functor (L m), Monad m) => MonadTrace m where
+  type L m :: Type -> Type
   stuck :: m v
-  lookup :: Name -> l (m v) -> m v
+  lookup :: Name -> L m (m v) -> m v
   app1 :: m v -> m v
   app2 :: m v -> m v
   bind :: m v -> m v
@@ -42,7 +46,10 @@ class (Applicative l, Monad m) => MonadTrace l m | m -> l where
   let_ :: m v -> m v
   update :: m v -> m v
 
-eval :: forall m l. (MonadAlloc l m, MonadTrace l m) => Expr -> Env m -> D m
+class MonadTrace m => MonadAlloc m where
+  alloc :: (L m (D m) -> D m) -> m (L m (D m))
+
+eval :: forall m. (MonadAlloc m, MonadTrace m) => Expr -> Env m -> D m
 eval e env = case e of
   Var x -> S.findWithDefault stuck x env
   App e x -> case S.lookup x env of
@@ -71,6 +78,12 @@ eval e env = case e of
       insertMany :: Env m -> [Name] -> [D m] -> Env m
       insertMany env xs ds = foldr (uncurry S.insert) env (zip xs ds)
 
+-- | The type of coinductive traces, in the sense that @MonadCoindTrace m => m@
+-- denotes a potentially infinite program trace.
+type MonadCoindTrace m = (MonadTrace m, L m ~ Later)
+-- | The type of inductive traces, in the sense that @MonadIndTrace m => m@
+-- denotes a finite program trace.
+type MonadIndTrace m = (MonadTrace m, L m ~ Identity)
 
 -----------------------
 -- By-name
@@ -78,16 +91,14 @@ eval e env = case e of
 newtype ByName m a = ByName { unByName :: (m a) }
   deriving newtype (Functor,Applicative,Monad)
 
-instance Monad m => MonadAlloc Later (ByName m) where
-  alloc f = pure (\_α -> (löb f))
-
 liftName :: (m v -> m v) -> ByName m v -> ByName m v
 liftName f (ByName m) = ByName (f m)
 
 liftNameL :: Functor l => (l (m v) -> m v) -> l (ByName m v) -> ByName m v
 liftNameL f = ByName . f . fmap unByName
 
-instance MonadTrace l m => MonadTrace l (ByName m) where
+instance MonadCoindTrace m => MonadTrace (ByName m) where
+  type L (ByName m) = Later
   stuck = ByName stuck
   lookup x = liftNameL (lookup x)
   app1 = liftName app1
@@ -97,6 +108,10 @@ instance MonadTrace l m => MonadTrace l (ByName m) where
   case2 = liftName case2
   update = liftName update
   let_ = liftName let_
+
+instance (MonadTrace (ByName m)) => MonadAlloc (ByName m) where
+  alloc f = pure (\_α -> (löb f))
+
 instance Show (ByName m a) where
   show _ = "_"
 
@@ -109,32 +124,14 @@ type Heap m = L.IntMap (Later (D m)) -- Addr -> D m
 newtype ByNeed m a = ByNeed { unByNeed :: StateT (Heap (ByNeed m)) m a }
   deriving newtype (Functor,Applicative,Monad)
 
-fetch :: Monad m => Addr -> Later (D (ByNeed m))
-fetch a α = do
-  μ <- ByNeed get
-  (μ L.! a) α
-
-memo :: MonadTrace Later m => Addr -> D (ByNeed m) -> D (ByNeed m)
-memo a d = do
-  v <- d
-  update $ do
-    ByNeed $ modify (L.insert a (\_α -> (return v)))
-    return v
-
-instance MonadTrace Later m => MonadAlloc Later (ByNeed m) where
-  alloc f = do
-    a <- ByNeed $ maybe 0 (\(k,_) -> k+1) . L.lookupMax <$> get
-    let ld = fetch a
-    ByNeed $ modify (L.insert a (\_α -> memo a (f ld)))
-    return ld
-
 liftNeed :: (forall a. m a -> m a) -> ByNeed m a -> ByNeed m a
 liftNeed f (ByNeed (StateT m)) = ByNeed (StateT (\h -> f (m h)))
 
 liftNeedL :: Functor l => (forall a. l (m a) -> m a) -> l (ByNeed m v) -> ByNeed m v
 liftNeedL f m = ByNeed (StateT (\h -> f (fmap (($ h) . runStateT . unByNeed) m)))
 
-instance MonadTrace l m => MonadTrace l (ByNeed m) where
+instance MonadCoindTrace m => MonadTrace (ByNeed m) where
+  type L (ByNeed m) = Later
   stuck = ByNeed (StateT (const stuck))
   lookup x = liftNeedL (lookup x)
   app1 = liftNeed app1
@@ -144,6 +141,25 @@ instance MonadTrace l m => MonadTrace l (ByNeed m) where
   case2 = liftNeed case2
   update = liftNeed update
   let_ = liftNeed let_
+
+fetch :: Monad m => Addr -> Later (D (ByNeed m))
+fetch a α = do
+  μ <- ByNeed get
+  (μ L.! a) α
+
+memo :: MonadCoindTrace m => Addr -> D (ByNeed m) -> D (ByNeed m)
+memo a d = do
+  v <- d
+  update $ do
+    ByNeed $ modify (L.insert a (\_α -> (return v)))
+    return v
+
+instance MonadCoindTrace m => MonadAlloc (ByNeed m) where
+  alloc f = do
+    a <- ByNeed $ maybe 0 (\(k,_) -> k+1) . L.lookupMax <$> get
+    let ld = fetch a
+    ByNeed $ modify (L.insert a (\_α -> memo a (f ld)))
+    return ld
 
 instance Show (ByNeed m a) where
   show _ = "_"
@@ -155,7 +171,25 @@ instance Show (ByNeed m a) where
 newtype ByValue m a = ByValue { unByValue :: (m a) }
   deriving newtype (Functor,Applicative,Monad,MonadFix)
 
-instance (MonadFix m, MonadTrace Later m) => MonadAlloc Later (ByValue m) where
+liftValue :: (forall a. m a -> m a) -> ByValue m a -> ByValue m a
+liftValue f (ByValue m) = ByValue (f m)
+
+liftValueL :: Functor l => (l (m v) -> m v) -> l (ByValue m v) -> ByValue m v
+liftValueL f = ByValue . f . fmap unByValue
+
+instance MonadCoindTrace m => MonadTrace (ByValue m) where
+  type L (ByValue m) = Later
+  stuck = ByValue stuck
+  lookup x = liftValueL (lookup x)
+  app1 = liftValue app1
+  app2 = liftValue app2
+  bind = liftValue bind
+  case1 = liftValue case1
+  case2 = liftValue case2
+  update = liftValue update
+  let_ = liftValue let_
+
+instance (MonadFix m, MonadTrace m, L m ~ Later) => MonadAlloc (ByValue m) where
   -- | `mfix` is generally untypable in guarded type theory.
   -- We'd need to communicate the number of steps that `m v` needs
   -- to produce the value `Later v`, and the `Later v` can only be used
@@ -173,22 +207,6 @@ instance (MonadFix m, MonadTrace Later m) => MonadAlloc Later (ByValue m) where
     v <- let_ $ mfix $ \v -> f (\_α -> return v)
     return (\_α -> return v)
 
-liftValue :: (forall a. m a -> m a) -> ByValue m a -> ByValue m a
-liftValue f (ByValue m) = ByValue (f m)
-
-liftValueL :: Functor l => (l (m v) -> m v) -> l (ByValue m v) -> ByValue m v
-liftValueL f = ByValue . f . fmap unByValue
-
-instance MonadTrace l m => MonadTrace l (ByValue m) where
-  stuck = ByValue stuck
-  lookup x = liftValueL (lookup x)
-  app1 = liftValue app1
-  app2 = liftValue app2
-  bind = liftValue bind
-  case1 = liftValue case1
-  case2 = liftValue case2
-  update = liftValue update
-  let_ = liftValue let_
 instance Show (ByValue m a) where
   show _ = "_"
 
@@ -258,18 +276,15 @@ class Monad m => MonadRecord m where
 
 newtype Clairvoyant m a = Clairvoyant { unClair :: ParT m a }
   deriving newtype (Functor,Applicative,Monad)
-instance forall m. (MonadTrace Later m, MonadFix m) => MonadAlloc Later (Clairvoyant m) where
-  alloc f = Clairvoyant (skip <|> let')
-    where
-      skip = return (\_α -> Clairvoyant empty)
-      let' = do
-        v <- parLöb $ unClair . let_ . f . fmap (Clairvoyant . ParT . pure)
-        return (\_α -> return v)
+
 liftClair :: (forall a. m a -> m a) -> Clairvoyant m a -> Clairvoyant m a
 liftClair f (Clairvoyant (ParT mforks)) = Clairvoyant $ ParT $ f mforks
+
 liftClairL :: Functor l => (forall a. l (m a) -> m a) -> l (Clairvoyant m a) -> Clairvoyant m a
 liftClairL f lm = Clairvoyant $ ParT $ f $ fmap (unParT . unClair) lm
-instance MonadTrace l m => MonadTrace l (Clairvoyant m) where
+
+instance MonadCoindTrace m => MonadTrace (Clairvoyant m) where
+  type L (Clairvoyant m) = Later
   stuck = Clairvoyant (ParT stuck)
   lookup x = liftClairL (lookup x)
   app1 = liftClair app1
@@ -279,6 +294,15 @@ instance MonadTrace l m => MonadTrace l (Clairvoyant m) where
   case2 = liftClair case2
   update = liftClair update
   let_ = liftClair let_
+
+instance forall m. (MonadFix m, MonadTrace m, L m ~ Later) => MonadAlloc (Clairvoyant m) where
+  alloc f = Clairvoyant (skip <|> let')
+    where
+      skip = return (\_α -> Clairvoyant empty)
+      let' = do
+        v <- parLöb $ unClair . let_ . f . fmap (Clairvoyant . ParT . pure)
+        return (\_α -> return v)
+
 instance (Show a, forall a. Show a => Show (m a)) => Show (Clairvoyant m a) where
   show (Clairvoyant m) = show m
 
@@ -298,15 +322,40 @@ runClair (Clairvoyant m) = headParT m >>= \case
   Nothing -> error "There should have been at least one Clairvoyant trace"
   Just t  -> pure t
 
-evalByName :: forall m. MonadTrace Later m => Expr -> m (Value (ByName m))
+evalByName :: forall m. MonadCoindTrace m => Expr -> m (Value (ByName m))
 evalByName e = unByName $ eval @(ByName m) e S.empty
 
-evalByNeed :: forall m. MonadTrace Later m => Expr -> m (Value (ByNeed m), Heap (ByNeed m))
+evalByNeed :: forall m. MonadCoindTrace m => Expr -> m (Value (ByNeed m), Heap (ByNeed m))
 evalByNeed e = runStateT (unByNeed (eval @(ByNeed m) e S.empty)) L.empty
 
-evalByValue :: forall m. (MonadFix m, MonadTrace Later m) => Expr -> m (Value (ByValue m))
+evalByValue :: forall m. (MonadFix m, MonadCoindTrace m) => Expr -> m (Value (ByValue m))
 evalByValue e = unByValue $ eval @(ByValue m) e S.empty
 
-evalClairvoyant :: forall m. (MonadRecord m, MonadFix m, MonadTrace Later m) => Expr -> m (Value (Clairvoyant m))
+evalClairvoyant :: forall m. (MonadRecord m, MonadFix m, MonadCoindTrace m) => Expr -> m (Value (Clairvoyant m))
 evalClairvoyant e = runClair $ eval @(Clairvoyant m) e S.empty
 
+
+-- Want this, but hard to get because we need a Monad instance for FinSim:
+--
+-- boundT :: (MonadCoindTrace m1, MonadIndTrace m2) => Int -> m1 v -> Maybe (m2 v)
+-- boundT 0 _ = Nothing
+-- boundT n (Delay t) = Delay . Identity <$> boundT (n-1) (t unsafeTick)
+-- boundT _ Stuck = Just Stuck
+-- boundT _ (Ret v) = Just (Ret v)
+--
+-- newtype FinSim m a = FinSim { unFinSim :: Int -> Maybe (m a) }
+--   deriving Functor
+
+-- instance Applicative f => Applicative (FinSim f) where
+--   pure = FinSim . const . Just . pure
+--   FinSim f <*> FinSim a = FinSim $ \n -> f n <*>
+
+-- liftSpendFuel :: Monad m => (m v -> m v) -> FinSim m v -> FinSim m v
+-- liftSpendFuel f (FinSim m) = FinSim $ ReaderT $ \n -> do
+--   guard (n > 0)
+--   runReaderT m (n-1)
+
+-- instance (MonadTrace m, Applicative (L m)) => MonadTrace (FinSim m) where
+--   type L (FinSim m) = Identity
+--   stuck = FinSim (lift $ lift stuck)
+--   lookup x (Identity m) = FinSim $ mapReaderT (mapMaybeT (lookup x . pure)) (unFinSim (spendFuel m))

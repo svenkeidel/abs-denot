@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 module PrefixTrace where
 
 import Prelude hiding (lookup, log)
@@ -36,7 +37,8 @@ instance MonadFix (PrefixTrace f) where
       go (Ret v) = (Ret v, v)
       go Stuck = (Stuck, undefined)
 
-instance MonadTrace Identity m => MonadTrace Later (PrefixTrace m) where
+instance (MonadIndTrace m) => MonadTrace (PrefixTrace m) where
+  type L (PrefixTrace m) = Later
   stuck = Stuck
   lookup x = Step (lookup x . Identity)
   app1 = Step app1 . pure
@@ -54,21 +56,21 @@ instance MonadRecord (PrefixTrace m) where
   recordIfJust (Step f s) = Step f . pure <$> (recordIfJust (s unsafeTick)) -- wildly unproductive! This is the culprit of Clairvoyant CbV
 
 -- | Potentitally infinite list; use take on result
-getPrefixTraces :: MonadTrace Identity m => Int -> PrefixTrace m v -> [m ()]
+getPrefixTraces :: MonadTrace m => Int -> PrefixTrace m v -> [m ()]
 getPrefixTraces n s = return () : case s of
   Step f s' | n > 0 -> map f (getPrefixTraces (n-1) (s' unsafeTick))
   _ -> []
 
-evalByName :: MonadTrace Identity m => Int -> Expr -> [m ()]
+evalByName :: MonadIndTrace m => Int -> Expr -> [m ()]
 evalByName n = getPrefixTraces n . Template.evalByName
 
-evalByNeed :: MonadTrace Identity m => Int -> Expr -> [m ()]
+evalByNeed :: MonadIndTrace m => Int -> Expr -> [m ()]
 evalByNeed n = getPrefixTraces n . Template.evalByNeed
 
-evalByValue :: MonadTrace Identity m => Int -> Expr -> [m ()]
+evalByValue :: MonadIndTrace m => Int -> Expr -> [m ()]
 evalByValue n = getPrefixTraces n . Template.evalByValue
 
-evalClairvoyant :: MonadTrace Identity m => Int -> Expr -> [m ()]
+evalClairvoyant :: MonadIndTrace m => Int -> Expr -> [m ()]
 evalClairvoyant n = getPrefixTraces n . Template.evalClairvoyant
 
 ---------------------
@@ -80,7 +82,8 @@ newtype LogEvents a = LogEvents { unLogEvents :: Writer String a }
 log :: String -> LogEvents ()
 log = LogEvents . tell
 
-instance MonadTrace Identity LogEvents where
+instance MonadTrace LogEvents where
+  type L LogEvents = Identity
   stuck = log "🗲" >> return undefined
   lookup x (Identity m) = log "L" >> m
   app1 m = log "a" >> m
