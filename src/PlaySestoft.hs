@@ -1,6 +1,6 @@
 {-# LANGUAGE TypeApplications #-}
 
-module Play where
+module PlaySestoft where
 
 import Control.Applicative
 import Control.Monad

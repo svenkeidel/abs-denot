@@ -1,6 +1,9 @@
 module Main where
 
-import qualified Play
+import qualified PlaySestoft
+import qualified PlayPCF
 
 main :: IO ()
-main = Play.main
+main = do
+  PlaySestoft.main
+  PlayPCF.main

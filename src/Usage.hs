@@ -130,10 +130,5 @@ instance Complete (Usg AbsVal) where
 instance MonadAlloc Usg AbsVal where
   alloc f = pure $ Identity $ kleeneFix (f . Identity)
 
-kleeneFix :: (Complete l, LowerBounded l) => (l -> l) -> l
-kleeneFix f = go (f bottom)
-  where
-  go l = let l' = f l in if l' ⊑ l then l' else go l'
-
 evalAbsUsg :: Expr -> Usg AbsVal
 evalAbsUsg e = eval e S.empty

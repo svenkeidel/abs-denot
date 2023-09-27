@@ -67,7 +67,9 @@ library
                       PrefixTrace,
                       Order,
                       Later,
-                      Play
+                      PCF,
+                      PlaySestoft,
+                      PlayPCF
 
     -- Modules included in this library but not exported.
     -- other-modules:

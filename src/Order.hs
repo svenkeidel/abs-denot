@@ -186,3 +186,8 @@ instance Eq a => PreOrd (Discrete a) where
 
 instance Show a => Show (Discrete a) where
   show (Discrete a) = show a
+
+kleeneFix :: (Complete l, LowerBounded l) => (l -> l) -> l
+kleeneFix f = go (f bottom)
+  where
+  go l = let l' = f l in if l' ⊑ l then l' else go l'

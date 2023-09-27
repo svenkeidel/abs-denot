@@ -26,7 +26,7 @@ data Value m = Stuck | Fun (D m -> D m) | Con ConTag [D m]
 type Env = S.Map Name
 
 instance Show (Value m) where
-  show (Fun _) = show "λ"
+  show (Fun _) = "λ"
   show (Con k _) = show k
   show Stuck = "🗲"
 
