@@ -48,7 +48,7 @@ timeout' time m = do
     _ -> return ()
 
 main :: IO ()
-main = forM_ [e_1, e_2, e_3, e_id, e_loop, e_w, e_w2] $ \e -> do
+main = forM_ [e_1, e_2, e_3, e_w, e_w2, e_loop, e_id] $ \e -> do
   putStrLn ""
   putStrLn "------------------------------"
   print e
@@ -60,8 +60,8 @@ main = forM_ [e_1, e_2, e_3, e_id, e_loop, e_w, e_w2] $ \e -> do
   -- print $ PrefixTrace.evalLog PrefixTrace.evalByNeed 40 e
   -- print $ PrefixTrace.evalLog PrefixTrace.evalByValue 40 e
   -- print $ PrefixTrace.evalLog PrefixTrace.evalClairvoyant 40 e
-  print $ PCF.eval0CachedCFA e
-  print $ PCF.exec0CachedCFA e
   timeout' 10000 $ print $ PCF.eval0CFA e
   timeout' 10000 $ print $ PCF.exec0CFA e
+  print $ PCF.eval0CachedCFA e
+  print $ PCF.exec0CachedCFA e
   return ()

@@ -381,6 +381,8 @@ instance IsValue CFA (Pow SynVal) where
 ----------------------
 
 data FunCache a b = FC (LMap.Map a b) (FunCache a b -> a -> b)
+instance (Show a, Show b) => Show (FunCache a b) where
+  show (FC cache _) = show cache
 instance (Eq a, Eq b) => Eq (FunCache a b) where
   FC l _ == FC r _ = l == r
 instance (Ord a, Ord b) => Ord (FunCache a b) where
@@ -396,16 +398,23 @@ instance (Ord a, Complete b) => Complete (FunCache a b) where
     let new_fun   = l2 ⊔ r2
         old_cache = l1 ⊔ r1
         old_fc    = FC old_cache new_fun -- might be out of date
-        new_cache = LMap.mapWithKey (\a _ -> new_fun old_fc a) old_cache
+        new_cache = LMap.mapWithKey (\a _ -> trace "test" new_fun old_fc a) old_cache
     in FC new_cache new_fun
 
-applyFunCache :: Ord a => FunCache a b -> a -> (FunCache a b, b)
+applyFunCache :: (Ord a, LowerBounded b) => FunCache a b -> a -> (FunCache a b, b)
 applyFunCache fc@(FC cache fun) a = case LMap.lookup a cache of
   Just b  -> (fc, b)
   Nothing ->
-    let b = fun fc a
-        fc' = FC (LMap.insert a b cache) fun
-    in (fc', b)
+    -- Note that we insert bottom into the cache before calling fun
+    -- and then update the cache again with the result.
+    -- It seems that this initialisation is necessary to guarantee
+    -- termination; otherwise we get a <<loop>> (in case taking fc1=fc2)
+    -- or an actually infinite loop (taking fc1=fc), for example in
+    --   rec f. λx. f x
+    let fc1 = FC (LMap.insert a bottom cache) fun
+        b = fun fc1 a
+        fc2 = FC (LMap.insert a b cache) fun
+    in (fc2, b)
 
 type Lams = Map.Map Label (FunCache AbsD AbsD) -- Lam label :-> join of all activations of the lambda (memoised and comparable)
 newtype CachedCFA a = CCFA { unCached :: StateT Lams CFA a }
@@ -459,11 +468,15 @@ instance IsValue CachedCFA (Pow SynVal) where
 
 instance MonadAlloc CachedCFA (Pow SynVal) where
   alloc f = CCFA $ do
-    let wrap = Identity . CCFA
-    pure $ wrap $ kleeneFix $ \(lams :: Lams, d :: CFA (Pow SynVal)) ->
-      let CFA calls (lams',d') = runStateT (unCached (f (wrap (lift d)))) lams in
-      traceM ("iter " ++ show d ++ "  " ++ show d')
-      (lams',CFA )
+    lams_start <- get
+    let wrap = Identity . CCFA . lift
+    let
+      (d,lams') = kleeneFix $ \(d :: CFA (Pow SynVal), lams :: Lams) ->
+        let lams1 = if lams ⊑ lams_start then lams_start else lams in
+        let CFA calls (v,lams2) = runStateT (unCached (f (wrap d))) lams1 in
+        (CFA calls v, lams2)
+    put lams'
+    pure (wrap d)
 
 runCached :: CachedCFA a -> CFA a
 runCached (CCFA s) = evalStateT s Map.empty
