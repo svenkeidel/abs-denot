@@ -177,7 +177,7 @@ memo :: MonadCoindTrace m => Addr -> D (ByNeed m) -> D (ByNeed m)
 memo a d = do
   v <- d
   update $ do
-    ByNeed $ modify (L.insert a (\_α -> (return v)))
+    ByNeed $ modify (L.insert a (\_α -> memo a (return v)))
     return v
 
 instance MonadCoindTrace m => MonadAlloc (ByNeed m) (Value (ByNeed m)) where

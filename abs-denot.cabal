@@ -67,6 +67,7 @@ library
                       PrefixTrace,
                       Order,
                       Later,
+                      Transition,
                       PCF,
                       PlaySestoft,
                       PlayPCF

@@ -17,6 +17,7 @@ import Bare
 import Usage
 import Types
 import PrefixTrace
+import Transition
 import System.IO
 
 x, y, z, a, b, c, d, e, f, i, t :: Expr
@@ -102,7 +103,8 @@ main :: IO ()
 main = forM_ [e_2, e_3, e_share, e_fresh, e_usg, e_usg2, e_usg3, e_usg4, e_usg_lam, e_type] $ \e -> do
   putStrLn ""
   putStrLn "------------------------------"
-  print e
+  print $ e
+  let !_ = show $ Bare.boundT 40 $ Transition.evalTransition @LBare e
   putStrLn "----------------"
   putStrLn "     Bare"
   putStrLn "----------------"
