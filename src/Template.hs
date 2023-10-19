@@ -62,8 +62,10 @@ eval e env = case e of
   Var x -> S.findWithDefault stuck x env
   App e x -> case S.lookup x env of
     Nothing -> stuck
-    Just d  -> app1 (eval e env) >>= \v -> apply v d
-  Lam x e -> injFun (\d -> app2 (eval e (S.insert x d env)))
+    Just d  -> do
+      v <- app1 (eval e env)
+      apply v d
+  Lam x e -> injFun $ \d -> app2 (eval e (S.insert x d env))
   Let x e1 e2 -> do
     let ext d = S.insert x (lookup x d) env
     d1 <- alloc (\d1 -> eval e1 (ext d1))

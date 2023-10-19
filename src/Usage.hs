@@ -14,42 +14,63 @@ import GHC.Show
 import Control.Monad
 import Data.Functor.Identity
 
-data U = Z | O | W -- 0 | 1 | ω
+data U = Zero | One | Omega -- 0 | 1 | ω
   deriving Eq
 
 instance PreOrd U where
-  l ⊑ r = l ⊔ r == r
+  -- Z ⊑ O ⊑ W
+  Zero ⊑ _ = True
+  _ ⊑ Omega = True
+  One ⊑ One = True
+  _ ⊑ _ = False
 
 instance Complete U where
-  Z ⊔ u = u
-  u ⊔ Z = u
-  O ⊔ O = O
-  _ ⊔ _ = W
+  Zero ⊔ u = u
+  u ⊔ Zero = u
+  One ⊔ One = One
+  _ ⊔ _ = Omega
 
 instance LowerBounded U where
-  bottom = Z
+  bottom = Zero
+
+instance Show U where
+  show Zero = "0"
+  show One = "1"
+  show Omega = "ω"
 
 (+#) :: U -> U -> U
-O  +# O  = W
-u1 +# u2 = u1 ⊔ u2
+Zero  +# u     = u
+u     +# Zero  = u
+Omega +# _     = Omega
+_     +# Omega = Omega
+One   +# One   = Omega
 
+-- | Usage information for multiple variables.
+-- If a variable does not occur, it is a assumed to have a usage of `Zero`.
 type Us = S.Map Name U
-
-(.+.) :: Us -> Us -> Us
-(.+.) = S.unionWith (+#)
 
 instance {-# OVERLAPPING #-} Show Us where
   show = ($ []) . showList__ (\(k,v) -> (k ++) . ('↦':) . shows v) . S.toList
 
-instance Show U where
-  show Z = "0"
-  show O = "1"
-  show W = "ω"
+-- | Combines usage information per variable point-wise with `+#`.
+(.+.) :: Us -> Us -> Us
+(.+.) = S.unionWith (+#)
+
+-- | Multiplies usage information for all variables with the given usage.
+(*#) :: U -> Us -> Us
+Zero  *# _  = S.empty
+One   *# us = us
+Omega *# us = S.map (const Omega) us
+
+-- | Increments usage for a given variable
+increment :: Us -> Name -> Us
+increment us x = S.alter (\e -> Just $ case e of Just u -> u +# One; Nothing -> One) x us
 
 -----------------------
 -- Usg
 -----------------------
 
+-- | Writer monad that accumulates usage information
 data Usg a = Usg Us !a
   deriving (Eq,Functor)
 
@@ -64,12 +85,9 @@ instance Monad Usg where
   Usg us1 a >>= k = case k a of
     Usg us2 b -> Usg (us1 .+. us2) b
 
-add :: Us -> Name -> Us
-add us x = S.alter (\e -> Just $ case e of Just u -> u +# O; Nothing -> O) x us
-
 instance MonadTrace Usg where
   type L Usg = Identity
-  lookup x (Identity (Usg us a)) = Usg (add us x) a
+  lookup x (Identity (Usg us a)) = Usg (increment us x) a
   app1 = id
   app2 = id
   bind = id
@@ -102,21 +120,17 @@ instance Show AbsVal where
 
 instance IsValue Usg AbsVal where
   stuck = return Nop
-  injFun f = Usg (evalDeep (f nopD)) Nop
+  injFun f = Usg (evalDeep (f zeroUsage)) Nop
   injCon _ ds = Usg (foldr (.+.) S.empty $ map evalDeep ds) Nop
   apply Nop d = Usg (evalDeep d) Nop
-  select Nop fs = Usg (lub $ map (\(k,f) -> evalDeep (f (replicate (conArity k) nopD))) fs) Nop
+  select Nop fs = Usg (lub $ map (\(k,f) -> evalDeep (f (replicate (conArity k) zeroUsage))) fs) Nop
 
-nopD :: Usg AbsVal
-nopD = Usg S.empty Nop
+zeroUsage :: Usg AbsVal
+zeroUsage = Usg S.empty Nop
 
+-- | Multiplies all usage information by `Omega`
 evalDeep :: Usg AbsVal -> Us
-evalDeep (Usg us _) = W *# us
-
-(*#) :: U -> Us -> Us
-Z *# _  = S.empty
-O *# us = us
-W *# us = S.map (const W) us
+evalDeep (Usg us _) = Omega *# us
 
 instance PreOrd (Usg AbsVal) where
   l ⊑ r = l ⊔ r == r

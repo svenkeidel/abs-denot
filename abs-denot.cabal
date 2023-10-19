@@ -70,7 +70,9 @@ library
                       Transition,
                       PCF,
                       PlaySestoft,
-                      PlayPCF
+                      PlayPCF,
+                      Concrete,
+                      Generic
 
     -- Modules included in this library but not exported.
     -- other-modules:
